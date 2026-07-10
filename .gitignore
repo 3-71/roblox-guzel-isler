@@ -1,0 +1,10 @@
+# Rojo build outputs
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+sourcemap.json
+
+# OS
+.DS_Store
+Thumbs.db
