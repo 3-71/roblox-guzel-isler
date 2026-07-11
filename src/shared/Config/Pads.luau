@@ -50,7 +50,8 @@ add({ id = "conveyor_3", kind = "conveyor", level = 3, name = "Conveyor 3", cost
 add({ id = "conveyor_4", kind = "conveyor", level = 4, name = "Conveyor 4", cost = 1_400_000, prereq = "factory_8" })
 
 -- Production speed (1..10): each level = faster belts (multiplicative).
-local speedCosts = { 250, 800, 2_600, 8_500, 28_000, 95_000, 320_000, 1_100_000, 3_800_000, 13_000_000 }
+-- First level cheap so it's an early purchase (~minute 2).
+local speedCosts = { 150, 800, 2_600, 8_500, 28_000, 95_000, 320_000, 1_100_000, 3_800_000, 13_000_000 }
 for level, cost in speedCosts do
 	add({
 		id = `speed_{level}`,
@@ -63,7 +64,10 @@ for level, cost in speedCosts do
 end
 
 -- Luck (1..10): each level shifts the 30% luck component toward high tiers.
-local luckCosts = { 400, 1_400, 4_800, 16_000, 55_000, 190_000, 650_000, 2_200_000, 7_500_000, 26_000_000 }
+-- Luck 1 is cheap and unlocked early — teaching the luck axis in minute 2 is
+-- the #1 lesson from My Knife Farm player guides (rarity is the emotional
+-- core; players who ignore luck churn).
+local luckCosts = { 200, 1_400, 4_800, 16_000, 55_000, 190_000, 650_000, 2_200_000, 7_500_000, 26_000_000 }
 for level, cost in luckCosts do
 	add({
 		id = `luck_{level}`,
@@ -71,7 +75,7 @@ for level, cost in luckCosts do
 		level = level,
 		name = `Luck {level}`,
 		cost = cost,
-		prereq = if level == 1 then "factory_3" else `luck_{level - 1}`,
+		prereq = if level == 1 then "factory_2" else `luck_{level - 1}`,
 	})
 end
 
@@ -101,9 +105,9 @@ for level, cost in displayCosts do
 	})
 end
 
--- Rebirth altar: repeatable (never marked owned), appears once the final
--- factory tier is bought. Cost is dynamic (GameConfig.Rebirth.BaseCost *
--- CostMult ^ rebirths) — resolved by RebirthService, so cost here is -2.
-add({ id = "rebirth", kind = "rebirth", level = 1, name = "⟳ REBIRTH", cost = -2, prereq = "factory_12" })
+-- Rebirth altar: repeatable (never marked owned), appears at the factory tier
+-- set in GameConfig.Rebirth.RequiredFactoryTier. Cost is dynamic
+-- (BaseCost * CostMult ^ rebirths) — resolved by RebirthService, so -2 here.
+add({ id = "rebirth", kind = "rebirth", level = 1, name = "⟳ REBIRTH", cost = -2, prereq = "factory_6" })
 
 return Pads

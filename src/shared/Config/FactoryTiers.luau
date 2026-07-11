@@ -21,7 +21,7 @@ export type FactoryTier = {
 }
 
 local FactoryTiers: { FactoryTier } = {
-	{ tier = 1, name = "Cardboard Workshop", padCost = 0, maxRarity = 2, valueMult = 1.0, baseInterval = 6.0, color = Color3.fromRGB(170, 140, 100) },
+	{ tier = 1, name = "Cardboard Workshop", padCost = 0, maxRarity = 2, valueMult = 1.0, baseInterval = 4.5, color = Color3.fromRGB(170, 140, 100) },
 	{ tier = 2, name = "Garage Setup", padCost = 120, maxRarity = 3, valueMult = 1.3, baseInterval = 5.8, color = Color3.fromRGB(150, 150, 155) },
 	{ tier = 3, name = "Backroom Bench", padCost = 550, maxRarity = 4, valueMult = 1.7, baseInterval = 5.6, color = Color3.fromRGB(124, 201, 84) },
 	{ tier = 4, name = "Small Assembly", padCost = 2_400, maxRarity = 5, valueMult = 2.2, baseInterval = 5.4, color = Color3.fromRGB(64, 183, 173) },

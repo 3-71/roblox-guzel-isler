@@ -72,12 +72,13 @@ function OfflineService.Process(profile: Types.Profile): Types.OfflinePayload?
 	for _ = 1, produced do
 		local index = RollLogic.RollKeyboard(factoryTier, effectiveLuck, rng)
 		local def = Keyboards[index]
-		local mutationId = RollLogic.RollMutation(rng, 1)
+		-- Mutations are ONLINE-ONLY by design (research: offline keeps the
+		-- habit alive; online presence earns the multipliers).
 		local instance: Types.KeyboardInstance = {
 			uid = HttpService:GenerateGUID(false),
 			id = def.id,
 			obtainedAt = now,
-			mutation = mutationId,
+			mutation = nil,
 		}
 		table.insert(profile.keyboards, instance)
 		profile.collection[def.id] = (profile.collection[def.id] or 0) + 1

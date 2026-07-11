@@ -29,7 +29,9 @@ local GameConfig = {
 	OfflineMinSeconds = 120, -- ignore tiny hops between servers
 
 	-- ===== Economy =====
-	StartingMoney = 0,
+	-- Research-tuned: first buy-pad should be reachable within ~30-45s of
+	-- spawning (players decide to stay in minutes 1-5).
+	StartingMoney = 60,
 
 	-- ===== Showcase =====
 	MaxDisplayStands = 6,
@@ -49,10 +51,12 @@ local GameConfig = {
 	AutoSaveSeconds = 60,
 
 	-- ===== Rebirth =====
+	-- Research-tuned: first prestige should land in a focused first session
+	-- (45-90 min), so it unlocks at tier 6; tier 12 is a multi-rebirth goal.
 	Rebirth = {
-		RequiredFactoryTier = 12, -- must own the final factory pad
-		BaseCost = 40_000_000,
-		CostMult = 2.5, -- cost = BaseCost * CostMult ^ rebirths
+		RequiredFactoryTier = 6,
+		BaseCost = 200_000,
+		CostMult = 3.0, -- cost = BaseCost * CostMult ^ rebirths
 		ValueBonusPerRebirth = 0.25, -- +25% sell value per rebirth, permanent
 		LuckLevelsPerRebirth = 1,
 	},
