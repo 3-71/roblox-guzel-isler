@@ -65,6 +65,11 @@ local function defaultProfile(): Types.Profile
 		equippedUid = nil,
 		lastSeen = now,
 		firstJoin = now,
+		rebirths = 0,
+		indexClaimed = {},
+		likesReceived = 0,
+		passes = {},
+		boosts = {},
 	}
 end
 

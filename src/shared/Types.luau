@@ -50,6 +50,7 @@ export type CollectedPayload = {
 	uid: string,
 	rarityTier: number,
 	source: string, -- "belt" | "offline"
+	mutation: string?, -- MutationDef id (nil = normal)
 }
 
 -- OfflineReport remote payload

@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage.Shared
 local Types = require(Shared.Types)
 local RollLogic = require(Shared.RollLogic)
+local Catalog = require(Shared.Catalog)
 local GameConfig = require(Shared.Config.GameConfig)
 local FactoryTiers = require(Shared.Config.FactoryTiers)
 local Keyboards = require(Shared.Config.Keyboards)
@@ -54,26 +55,36 @@ function OfflineService.Process(profile: Types.Profile): Types.OfflinePayload?
 	local rolled = math.floor(secondsAway / interval) * conveyors
 
 	local cap = offlineCap(upgrades.storage)
+	if profile.passes ~= nil and profile.passes.doubleStorage then
+		cap *= 2
+	end
 	local inventoryRoom = math.max(GameConfig.InventoryCap - #profile.keyboards, 0)
 	local produced = math.min(rolled, cap, inventoryRoom)
 	if produced <= 0 then
 		return nil
 	end
 
-	local bestTier = 0
+	-- No server event applies offline; boosts/rebirths/index still count.
+	local effectiveLuck = RollLogic.GetEffectiveLuck(profile, now, 0)
+
+	local bestValue = 0
 	local bestKeyboardId: string? = nil
 	for _ = 1, produced do
-		local index = RollLogic.RollKeyboard(factoryTier, math.max(upgrades.luck, 0), rng)
+		local index = RollLogic.RollKeyboard(factoryTier, effectiveLuck, rng)
 		local def = Keyboards[index]
+		local mutationId = RollLogic.RollMutation(rng, 1)
 		local instance: Types.KeyboardInstance = {
 			uid = HttpService:GenerateGUID(false),
 			id = def.id,
 			obtainedAt = now,
+			mutation = mutationId,
 		}
 		table.insert(profile.keyboards, instance)
 		profile.collection[def.id] = (profile.collection[def.id] or 0) + 1
-		if def.rarityTier > bestTier then
-			bestTier = def.rarityTier
+		-- "Best" = highest sell value, so a Golden mid-tier can headline.
+		local value = Catalog.GetSellValue(def.id, factoryTier, mutationId, profile.rebirths)
+		if value > bestValue then
+			bestValue = value
 			bestKeyboardId = def.id
 		end
 	end

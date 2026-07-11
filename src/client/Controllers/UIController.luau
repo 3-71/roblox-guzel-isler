@@ -12,6 +12,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("Config"):WaitForChild("GameConfig"))
 local Rarities = require(Shared:WaitForChild("Config"):WaitForChild("Rarities"))
 local Keyboards = require(Shared:WaitForChild("Config"):WaitForChild("Keyboards"))
+local Events = require(Shared:WaitForChild("Config"):WaitForChild("Events"))
 local Catalog = require(Shared:WaitForChild("Catalog"))
 local RollLogic = require(Shared:WaitForChild("RollLogic"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
@@ -311,7 +312,7 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 	title.ZIndex = 6
 	local sub = mkText(overlay, {
 		Size = UDim2.new(1, 0, 0, 18),
-		Text = `{rarity.name} · sells for ${abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier))}`,
+		Text = `{rarity.name} · sells for ${abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths))}`,
 		TextColor3 = TEXT_DIM,
 		LayoutOrder = 2,
 	})
@@ -431,16 +432,17 @@ local function renderInventory()
 			Text = def.name,
 			TextColor3 = rarity.color,
 		})
+		local mutationDef = Catalog.GetMutation(instance.mutation)
 		mkText(tile, {
 			Size = UDim2.new(1, -8, 0, 20),
 			Position = UDim2.fromOffset(4, 42),
-			Text = rarity.name,
-			TextColor3 = TEXT_DIM,
+			Text = if mutationDef then `{string.upper(mutationDef.name)} · {rarity.name}` else rarity.name,
+			TextColor3 = if mutationDef then mutationDef.tint else TEXT_DIM,
 		})
 		local status = if p.equippedUid == instance.uid
 			then "EQUIPPED"
 			elseif isDisplayed(p, instance.uid) then "ON DISPLAY"
-			else "$" .. abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier))
+			else "$" .. abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths))
 		mkText(tile, {
 			Size = UDim2.new(1, -8, 0, 20),
 			Position = UDim2.fromOffset(4, 66),
@@ -470,7 +472,7 @@ local function bulkPreview(): (number, number)
 		local def = Catalog.GetKeyboard(instance.id)
 		if def and def.rarityTier < bulkTier and p.equippedUid ~= instance.uid and not isDisplayed(p, instance.uid) then
 			count += 1
-			total += Catalog.GetSellValue(def.id, p.upgrades.factoryTier)
+			total += Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths)
 		end
 	end
 	return count, total
@@ -671,7 +673,20 @@ local function renderOdds()
 			child:Destroy()
 		end
 	end
-	local odds = RollLogic.GetOdds(p.upgrades.factoryTier, p.upgrades.luck)
+	-- Effective luck includes rebirths, index rewards, potions, passes, and
+	-- any active server event (published as Workspace attributes).
+	local eventLuck = 0
+	local eventId = workspace:GetAttribute("ActiveEventId")
+	local eventUntil = workspace:GetAttribute("ActiveEventUntil")
+	if typeof(eventId) == "string" and eventId ~= "" and typeof(eventUntil) == "number" and eventUntil > os.time() then
+		for _, event in Events do
+			if event.id == eventId then
+				eventLuck = event.luckBonus
+				break
+			end
+		end
+	end
+	local odds = RollLogic.GetOdds(p.upgrades.factoryTier, RollLogic.GetEffectiveLuck(p, os.time(), eventLuck))
 	for tier = 1, #Rarities do
 		local rarity = Rarities[tier]
 		local chance = odds[tier]
@@ -828,6 +843,9 @@ local function showCelebration(payload: Types.CollectedPayload)
 	if not def or not rarity then
 		return
 	end
+	local mutationDef = Catalog.GetMutation(payload.mutation)
+	local titleText = if mutationDef then `{string.upper(mutationDef.name)} {def.name}!` else def.name
+	local titleColor = if mutationDef then mutationDef.tint else rarity.color
 
 	local dim = mkFrame(screenGui, {
 		Size = UDim2.fromScale(1, 1),
@@ -861,8 +879,8 @@ local function showCelebration(payload: Types.CollectedPayload)
 		mkText(card, {
 			Size = UDim2.new(1, -20, 0, 56),
 			Position = UDim2.fromOffset(10, 56),
-			Text = def.name,
-			TextColor3 = rarity.color,
+			Text = titleText,
+			TextColor3 = titleColor,
 			ZIndex = 12,
 		})
 		mkText(card, {
@@ -1046,7 +1064,7 @@ function UIController.Start()
 	end)
 
 	Remotes.KeyboardCollected.OnClientEvent:Connect(function(payload: Types.CollectedPayload)
-		if payload.rarityTier >= GameConfig.CelebrateMinTier then
+		if payload.rarityTier >= GameConfig.CelebrateMinTier or payload.mutation ~= nil then
 			queueCelebration(payload)
 		end
 	end)

@@ -30,7 +30,7 @@ export type KeyboardDef = {
 
 local KeyboardModel = {}
 
-function KeyboardModel.Build(def: KeyboardDef, scale: number): Model
+function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): Model
 	scale = math.max(scale, 0.05)
 	local look = def.look
 	local style = look.style
@@ -165,6 +165,26 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number): Model
 		light.Brightness = 1.3
 		light.Range = math.clamp(4 + 5 * scale, 2, 60)
 		light.Parent = body
+	end
+
+	-- Mutation pass (MutationDef from Config/Mutations, optional 3rd arg):
+	-- tint every part toward the mutation color and tag the model with
+	-- attributes the client animates ("Mutation"; "Rainbow" on the body).
+	if mutation ~= nil and typeof(mutation) == "table" and typeof(mutation.tint) == "Color3" then
+		model:SetAttribute("Mutation", mutation.id)
+		for _, part in model:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.Color = part.Color:Lerp(mutation.tint, 0.55)
+			end
+		end
+		if mutation.rainbow == true then
+			body:SetAttribute("Rainbow", true)
+		end
+		local mutationLight = Instance.new("PointLight")
+		mutationLight.Color = mutation.tint
+		mutationLight.Range = math.clamp(4 + 4 * scale, 2, 60)
+		mutationLight.Brightness = 1.2
+		mutationLight.Parent = body
 	end
 
 	return model

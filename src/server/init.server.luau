@@ -23,6 +23,9 @@ local serviceModules = {
 	require(Services.ShowcaseService),
 	require(Services.EquipService),
 	require(Services.OfflineService),
+	-- phase 2
+	require(Services.EventService),
+	require(Services.IndexService),
 }
 
 for _, service in serviceModules do

@@ -22,6 +22,8 @@ local heldModels: { [Player]: Model } = {}
 local characterConns: { [Player]: RBXScriptConnection } = {}
 -- token bucket per player for TypeKeyRequest
 local typeTokens: { [Player]: { tokens: number, last: number } } = {}
+-- subscribers to accepted typing keypresses (see OnTypeAccepted)
+local typeAcceptedCallbacks: { (Player) -> () } = {}
 
 local rng = Random.new()
 
@@ -181,10 +183,20 @@ local function onTypeKeyRequest(player: Player)
 		if other ~= player then
 			local otherRoot = other.Character and other.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if otherRoot and (otherRoot.Position - root.Position).Magnitude <= GameConfig.TypeSoundRange then
-				Remotes.SoundPulse:FireClient(other, primary, instance.id)
+				Remotes.SoundPulse:FireClient(other, primary, instance.id, instance.mutation)
 			end
 		end
 	end
+
+	for _, callback in typeAcceptedCallbacks do
+		task.spawn(callback, player)
+	end
+end
+
+-- Fired after a TypeKeyRequest passes rate limiting + equip validation.
+-- Used by TypingRaceService to count race keypresses.
+function EquipService.OnTypeAccepted(callback: (Player) -> ())
+	table.insert(typeAcceptedCallbacks, callback)
 end
 
 function EquipService.Init() end

@@ -136,6 +136,72 @@ local function sparkleLoop()
 	end
 end
 
+-- Mutation animations: hue-cycle any part tagged Rainbow=true (holo/glitched
+-- keyboards), and flicker parts of models tagged Mutation="glitched".
+local function mutationAnimatorLoop()
+	local rainbowParts: { [BasePart]: boolean } = {}
+	local glitchModels: { [Model]: boolean } = {}
+	local lastScan = 0
+	local hue = 0
+	while true do
+		task.wait(0.1)
+		hue = (hue + 0.02) % 1
+
+		if os.clock() - lastScan > 3 then
+			lastScan = os.clock()
+			pcall(function()
+				table.clear(rainbowParts)
+				table.clear(glitchModels)
+				local function scan(root: Instance)
+					for _, inst in root:GetDescendants() do
+						if inst:IsA("BasePart") and inst:GetAttribute("Rainbow") == true then
+							rainbowParts[inst] = true
+						elseif inst:IsA("Model") and inst:GetAttribute("Mutation") == "glitched" then
+							glitchModels[inst] = true
+						end
+					end
+				end
+				local plots = workspace:FindFirstChild("Plots")
+				if plots then
+					scan(plots)
+				end
+				for _, player in Players:GetPlayers() do
+					if player.Character then
+						scan(player.Character)
+					end
+				end
+			end)
+		end
+
+		for part in rainbowParts do
+			if part.Parent then
+				part.Color = Color3.fromHSV(hue, 0.65, 1)
+			else
+				rainbowParts[part] = nil
+			end
+		end
+		for model in glitchModels do
+			if model.Parent then
+				if math.random() < 0.06 then
+					local parts = model:GetChildren()
+					local pick = parts[math.random(1, #parts)]
+					if pick and pick:IsA("BasePart") then
+						local original = pick.Transparency
+						pick.Transparency = 0.8
+						task.delay(0.07, function()
+							if pick.Parent then
+								pick.Transparency = original
+							end
+						end)
+					end
+				end
+			else
+				glitchModels[model] = nil
+			end
+		end
+	end
+end
+
 function EffectsController.Start()
 	Remotes.KeyboardCollected.OnClientEvent:Connect(function(payload: Types.CollectedPayload)
 		local position = getBeltEndPosition()
@@ -152,6 +218,7 @@ function EffectsController.Start()
 	end)
 
 	task.spawn(sparkleLoop)
+	task.spawn(mutationAnimatorLoop)
 end
 
 return EffectsController

@@ -27,13 +27,14 @@ type SoundSpec = {
 	jitter: number,
 }
 
-local function playLayers(spec: SoundSpec, parent3D: Instance?)
+local function playLayers(spec: SoundSpec, parent3D: Instance?, pitchMult: number?, extraJitter: number?)
+	local totalJitter = math.max(spec.jitter + (extraJitter or 0), 0)
 	for _, layer in spec.layers do
 		local sound = Instance.new("Sound")
 		sound.SoundId = layer.soundId
 		sound.Volume = layer.volume
-		local jitter = 1 + rng:NextNumber(-spec.jitter, spec.jitter)
-		sound.PlaybackSpeed = math.max(layer.playbackSpeed * jitter, 0.05)
+		local jitter = 1 + rng:NextNumber(-totalJitter, totalJitter)
+		sound.PlaybackSpeed = math.max(layer.playbackSpeed * (pitchMult or 1) * jitter, 0.05)
 		if parent3D then
 			sound.RollOffMaxDistance = GameConfig.TypeSoundRange
 			sound.RollOffMinDistance = 8
@@ -46,9 +47,15 @@ local function playLayers(spec: SoundSpec, parent3D: Instance?)
 	end
 end
 
-function SoundController.PlayKeyboard(keyboardId: string, parent3D: Instance?)
+function SoundController.PlayKeyboard(keyboardId: string, parent3D: Instance?, mutation: string?)
 	local def = Catalog.GetKeyboard(keyboardId)
-	if def then
+	if not def then
+		return
+	end
+	local mutationDef = Catalog.GetMutation(mutation)
+	if mutationDef then
+		playLayers(def.sound, parent3D, mutationDef.soundPitchMult, mutationDef.extraJitter)
+	else
 		playLayers(def.sound, parent3D)
 	end
 end
@@ -99,7 +106,7 @@ local function onTypingInput()
 		return
 	end
 
-	SoundController.PlayKeyboard(equipped.id)
+	SoundController.PlayKeyboard(equipped.id, nil, equipped.mutation)
 
 	local now = os.clock()
 	if now - lastTypeSent >= 1 / GameConfig.TypeRateLimitPerSecond then
@@ -114,15 +121,15 @@ function SoundController.Start()
 	end)
 
 	Remotes.KeyboardCollected.OnClientEvent:Connect(function(payload: Types.CollectedPayload)
-		SoundController.PlayKeyboard(payload.keyboardId)
-		if payload.rarityTier >= GameConfig.CelebrateMinTier then
+		SoundController.PlayKeyboard(payload.keyboardId, nil, payload.mutation)
+		if payload.rarityTier >= GameConfig.CelebrateMinTier or payload.mutation ~= nil then
 			playCelebrationSting()
 		end
 	end)
 
-	Remotes.SoundPulse.OnClientEvent:Connect(function(originPart: Instance?, keyboardId: string)
+	Remotes.SoundPulse.OnClientEvent:Connect(function(originPart: Instance?, keyboardId: string, mutation: string?)
 		if typeof(originPart) == "Instance" and originPart:IsA("BasePart") then
-			SoundController.PlayKeyboard(keyboardId, originPart)
+			SoundController.PlayKeyboard(keyboardId, originPart, mutation)
 		end
 	end)
 

@@ -24,6 +24,7 @@ local RollLogic = require(Shared.RollLogic)
 local GameConfig = require(Shared.Config.GameConfig)
 local FactoryTiers = require(Shared.Config.FactoryTiers)
 local Keyboards = require(Shared.Config.Keyboards)
+local Events = require(Shared.Config.Events)
 
 local DataService = require(script.Parent.DataService)
 local InventoryService = require(script.Parent.InventoryService)
@@ -50,6 +51,25 @@ type PlayerState = {
 
 local states: { [Player]: PlayerState } = {}
 
+-- The active server event (from Workspace attributes set by EventService),
+-- or nil when none / expired.
+local function getActiveEvent(): typeof(Events[1])?
+	local id = workspace:GetAttribute("ActiveEventId")
+	local expiry = workspace:GetAttribute("ActiveEventUntil")
+	if typeof(id) ~= "string" or id == "" then
+		return nil
+	end
+	if typeof(expiry) ~= "number" or expiry <= os.time() then
+		return nil
+	end
+	for _, event in Events do
+		if event.id == id then
+			return event
+		end
+	end
+	return nil
+end
+
 -- Effective seconds between productions on ONE conveyor.
 local function effectiveInterval(upgrades: Types.Upgrades): number
 	local tier = math.clamp(upgrades.factoryTier, 1, #FactoryTiers)
@@ -70,7 +90,8 @@ local function rideBelt(
 	beltStart: Attachment,
 	beltEnd: Attachment,
 	keyboardId: string,
-	glow: boolean
+	glow: boolean,
+	mutation: string?
 )
 	local startPos = beltStart.WorldPosition + Vector3.new(0, BELT_HOVER, 0)
 	local endPos = beltEnd.WorldPosition + Vector3.new(0, BELT_HOVER, 0)
@@ -133,7 +154,7 @@ local function rideBelt(
 	-- Arrival = auto-collect. AddKeyboard itself no-ops if the player left or
 	-- the inventory filled while this item was in flight.
 	if player.Parent ~= nil then
-		InventoryService.AddKeyboard(player, keyboardId, "belt")
+		InventoryService.AddKeyboard(player, keyboardId, "belt", mutation)
 	end
 end
 
@@ -172,21 +193,28 @@ local function produceTick(player: Player, state: PlayerState, profile: Types.Pr
 
 	local upgrades = profile.upgrades
 	local factoryTier = math.clamp(upgrades.factoryTier, 1, #FactoryTiers)
-	local keyboardIndex = RollLogic.RollKeyboard(factoryTier, math.max(upgrades.luck, 0), rng)
+
+	local event = getActiveEvent()
+	local effectiveLuck = RollLogic.GetEffectiveLuck(profile, os.time(), if event then event.luckBonus else 0)
+	local keyboardIndex = RollLogic.RollKeyboard(factoryTier, effectiveLuck, rng)
 	local def = Keyboards[keyboardIndex]
 	if def == nil then
 		return
 	end
+	local mutationId = RollLogic.RollMutation(rng, if event then event.mutationMult else 1)
+	local mutationDef = Catalog.GetMutation(mutationId)
 	local rarity = Catalog.GetRarity(def.rarityTier)
-	local glow = rarity ~= nil and rarity.glow
+	local glow = (rarity ~= nil and rarity.glow) or mutationDef ~= nil
 
-	local buildOk, model = pcall(KeyboardModel.Build, def, ITEM_SCALE)
+	-- Extra 3rd arg is ignored by the 2-arg KeyboardModel.Build until the
+	-- mutation-aware version ships — safe either way.
+	local buildOk, model = pcall(KeyboardModel.Build, def, ITEM_SCALE, mutationDef)
 	if not buildOk or typeof(model) ~= "Instance" or not model:IsA("Model") then
 		warn(`[ProductionService] KeyboardModel.Build failed for "{def.id}": {model}`)
 		return
 	end
 
-	task.spawn(rideBelt, player, model, conveyor, beltStart, beltEnd, def.id, glow)
+	task.spawn(rideBelt, player, model, conveyor, beltStart, beltEnd, def.id, glow, mutationId)
 end
 
 -- The per-(player, lane) driver. Locked lanes poll until unlocked; unlocked

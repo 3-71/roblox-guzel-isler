@@ -24,7 +24,7 @@ local DataService = require(script.Parent.DataService)
 
 local InventoryService = {}
 
-function InventoryService.AddKeyboard(player: Player, keyboardId: string, source: string): Types.KeyboardInstance?
+function InventoryService.AddKeyboard(player: Player, keyboardId: string, source: string, mutation: string?): Types.KeyboardInstance?
 	local profile = DataService.GetProfile(player)
 	if profile == nil then
 		return nil -- player left or profile not loaded yet
@@ -40,10 +40,12 @@ function InventoryService.AddKeyboard(player: Player, keyboardId: string, source
 		return nil
 	end
 
+	local mutationDef = Catalog.GetMutation(mutation)
 	local instance: Types.KeyboardInstance = {
 		uid = HttpService:GenerateGUID(false),
 		id = def.id,
 		obtainedAt = os.time(),
+		mutation = if mutationDef then mutationDef.id else nil,
 	}
 	table.insert(profile.keyboards, instance)
 	profile.collection[def.id] = (profile.collection[def.id] or 0) + 1
@@ -56,12 +58,19 @@ function InventoryService.AddKeyboard(player: Player, keyboardId: string, source
 		uid = instance.uid,
 		rarityTier = def.rarityTier,
 		source = source,
+		mutation = instance.mutation,
 	}
 	Remotes.KeyboardCollected:FireClient(player, payload)
 
 	local rarity = Catalog.GetRarity(def.rarityTier)
-	if rarity ~= nil and rarity.tier >= GameConfig.GlobalFlexMinTier then
-		Remotes.Notify:FireAllClients("flex", player.Name .. " just rolled a " .. rarity.name .. " " .. def.name .. "!")
+	if rarity ~= nil then
+		-- High tiers always flex; huge mutations (holo/glitched) flex at any tier.
+		local bigMutation = mutationDef ~= nil and mutationDef.valueMult >= 12
+		if rarity.tier >= GameConfig.GlobalFlexMinTier or bigMutation then
+			local who = if profile.passes ~= nil and profile.passes.vip then "👑 " .. player.Name else player.Name
+			local what = if mutationDef then mutationDef.name .. " " .. rarity.name else rarity.name
+			Remotes.Notify:FireAllClients("flex", who .. " just rolled a " .. what .. " " .. def.name .. "!")
+		end
 	end
 
 	return instance

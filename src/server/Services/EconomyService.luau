@@ -226,7 +226,7 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 	local factoryTier = profile.upgrades.factoryTier
 	local total = 0
 	for _, instance in removed do
-		total += Catalog.GetSellValue(instance.id, factoryTier)
+		total += Catalog.GetSellValue(instance.id, factoryTier, instance.mutation, profile.rebirths)
 	end
 	EconomyService.AddMoney(player, total)
 
