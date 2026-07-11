@@ -6,6 +6,8 @@ local Rarities = require(script.Parent.Config.Rarities)
 local Keyboards = require(script.Parent.Config.Keyboards)
 local FactoryTiers = require(script.Parent.Config.FactoryTiers)
 local Pads = require(script.Parent.Config.Pads)
+local Mutations = require(script.Parent.Config.Mutations)
+local GameConfig = require(script.Parent.Config.GameConfig)
 
 local Catalog = {}
 
@@ -48,15 +50,37 @@ function Catalog.GetPadCost(id: string): number?
 	return pad.cost
 end
 
+function Catalog.GetMutation(id: string?): typeof(Mutations[1])?
+	if not id then
+		return nil
+	end
+	for _, mutation in Mutations do
+		if mutation.id == id then
+			return mutation
+		end
+	end
+	return nil
+end
+
 -- Sell value of one keyboard for a player at the given factory tier.
-function Catalog.GetSellValue(keyboardId: string, factoryTier: number): number
+-- mutation (MutationDef id) and rebirths are optional multipliers.
+function Catalog.GetSellValue(keyboardId: string, factoryTier: number, mutation: string?, rebirths: number?): number
 	local def = keyboardById[keyboardId]
 	if not def then
 		return 0
 	end
 	local rarity = Rarities[def.rarityTier]
 	local ft = FactoryTiers[math.clamp(factoryTier, 1, #FactoryTiers)]
-	return math.floor(rarity.baseValue * ft.valueMult)
+	local value = rarity.baseValue * ft.valueMult
+
+	local mutationDef = Catalog.GetMutation(mutation)
+	if mutationDef then
+		value *= mutationDef.valueMult
+	end
+	if rebirths and rebirths > 0 then
+		value *= 1 + rebirths * GameConfig.Rebirth.ValueBonusPerRebirth
+	end
+	return math.floor(value)
 end
 
 return Catalog

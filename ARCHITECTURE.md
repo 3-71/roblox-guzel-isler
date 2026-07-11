@@ -157,3 +157,140 @@ Each controller: table with `Start()`.
 
 - `rojo build default.project.json -o build.rbxlx` must succeed.
 - `luau-analyze` (with Roblox type defs) must pass on all `src/**` files.
+
+---
+
+# Phase 2 — Mutations, Rebirth, Index, Leaderboards, Events, Monetization, Race, Likes
+
+New shared contracts (DONE — consume, don't restructure): `Config/Mutations`,
+`Config/IndexRewards`, `Config/Events`, `Config/Products`, `GameConfig.Rebirth/
+Race/Event*/Leaderboard*`, `Types` additions (KeyboardInstance.mutation;
+Profile.rebirths/indexClaimed/likesReceived/passes/boosts), Remotes additions
+(`RebirthRequest`, `ClaimIndexReward`, `RaceState`),
+`RollLogic.RollMutation(rng, chanceMult)`, `RollLogic.GetEffectiveLuck(profile,
+now, eventLuckBonus)`, `Catalog.GetMutation(id?)`,
+`Catalog.GetSellValue(keyboardId, factoryTier, mutation?, rebirths?)`,
+`Config/Pads` rebirth pad (kind "rebirth", cost -2 = dynamic, repeatable).
+
+Cross-cutting rules:
+- EVERY luck read goes through `RollLogic.GetEffectiveLuck(profile, os.time(), eventLuckBonus)`.
+  The active event is published by EventService as Workspace attributes
+  `ActiveEventId: string` ("" = none) and `ActiveEventUntil: number`; readers
+  look up luckBonus/mutationMult in Config/Events themselves.
+- EVERY sell-value read passes the instance's mutation and profile.rebirths.
+- Mutations: production + offline rolls call `RollLogic.RollMutation(rng, mult)`
+  where mult = active event's mutationMult (default 1). InventoryService.AddKeyboard
+  gains an optional `mutation: string?` parameter stored on the instance;
+  KeyboardCollected payload gains `mutation: string?`.
+- DataService default profile + reconcile must cover the new Profile fields
+  (rebirths=0, indexClaimed={}, likesReceived=0, passes={}, boosts={}).
+
+### New/changed server services (Init/Start pattern, appended to bootstrap order)
+
+**RebirthService** — handles the plot's rebirth pad (PadService special-cases
+kind "rebirth": never marks owned, delegates to `RebirthService.OnPadTouched(player)`)
+AND the `RebirthRequest` remote (UI button). Validates factoryTier == 12 and
+money >= `GameConfig.Rebirth.BaseCost * CostMult ^ rebirths`. Effect: deduct
+cost, rebirths += 1, reset money to 0, upgrades.factoryTier/conveyors/speed/
+luck/storage back to base (1/1/0/0/0; displays KEPT), clear profile.pads
+EXCEPT display pads, keep keyboards/collection/displayed/equipped. Rebuild plot
+visuals (PlotService exposes `PlotService.RebuildForProfile(player)` — new
+public function that re-applies pad visuals + PadService.RefreshPads). Server-wide
+flex Notify + celebration. Updates the rebirth pad's cost label per player.
+
+**IndexService** — `ClaimIndexReward` remote: validate reward id exists,
+not already claimed, distinct-discovered count (#keys of profile.collection)
+>= reward.count; then EconomyService.AddMoney(cash), profile.indexClaimed[id]=true,
+MarkDirty+Sync, Notify. (Luck bonus applies automatically via GetEffectiveLuck.)
+
+**LeaderboardService** — OrderedDataStores `GAK_Earned_v1` and `GAK_Collection_v1`
+(collection score = sum over discovered ids of rarityTier^2). Writes each
+player's scores on save cadence (subscribe OnProfileLoaded + a 60s loop, pcall
+everything, skip in Studio fallback). Reads top `GameConfig.LeaderboardSize`
+every `LeaderboardRefreshSeconds` and renders onto the hub's leaderboard
+boards (SurfaceGui text lists — boards built by HubBuilder additions:
+`HubBuilder.BuildLeaderboards(): (Part, Part)` returning the two board parts,
+called from LeaderboardService.Start via a new hub lookup `workspace.Hub:FindFirstChild("EarnedBoard"/"CollectionBoard")`).
+
+**EventService** — loop: wait random(EventMinInterval..EventMaxInterval), pick
+weighted event from Config/Events, set Workspace attributes, Notify ALL
+("event", name .. " — " .. tagline), after duration clear attributes + Notify
+end. Expose `EventService.GetActive(): (EventDef?, number)` for server readers
+(ProductionService/OfflineService use it for luckBonus + mutationMult; offline
+uses none).
+
+**MonetizationService** — on profile load: for each gamepass with id ~= 0,
+pcall MarketplaceService:UserOwnsGamePassAsync -> profile.passes[key]. Connect
+PromptGamePassPurchaseFinished to re-check. ProcessReceipt for dev products:
+resolve by id, grant cash (EconomyService.AddMoney) or boosts
+(profile.boosts[key] = os.time() + duration; luckParty also sets
+boosts.serverLuckParty on EVERY online player's profile for 300s), MarkDirty+
+Sync, return PurchaseGranted (ProductPurchaseDecision.PurchaseGranted; NotProcessedYet on any failure).
+Gamepass effects consumed elsewhere: doubleLuck (GetEffectiveLuck — done),
+doubleStorage (OfflineService cap *2), extraStands (ShowcaseService allows
+standIndex <= upgrades.displays + 2 and UI shows them), vip (InventoryService
+flex prefix "👑 " + gold sign tag via PlotBuilder attribute).
+
+**TypingRaceService** — loop every `GameConfig.Race.IntervalSeconds`: broadcast
+RaceState {phase="joining", endsAt}; players join by standing on the hub race
+pad (HubBuilder addition: `RacePad` part in Workspace.Hub) during the window;
+then phase="racing" {endsAt}: count each ACCEPTED TypeKeyRequest (EquipService
+exposes `EquipService.OnTypeAccepted(callback: (Player) -> ())` — new hook,
+fired after rate-limit+equip validation) for joined players; score = presses *
+(1 + equippedRarityTier/12). phase="finished" {scores}: winner gets
+`BaseReward * factoryTier` cash, server flex. RaceState fired to all on every
+phase change and each ~1s with live top scores while racing.
+
+**LikeService** — ProximityPrompt on each plot's Sign ("Like this farm!",
+HoldDuration 0.3). Triggered: visitor (not owner, once per (visitor, owner)
+pair per server session) -> owner profile.likesReceived += 1, MarkDirty+Sync,
+Notify owner, update sign text via PlotBuilder helper (sign shows
+"<name>'s Keyboard Farm  ❤ N").
+
+### World additions (PlotBuilder/HubBuilder edits)
+
+- PlotBuilder: rebirth pad position (near factory center, distinct gold/white
+  look), pad label refresh helper `PlotBuilder.SetPadLabel(plot, padId, text)`,
+  sign like-count + VIP tag helpers, mutation-aware `KeyboardModel` calls pass through.
+- KeyboardModel.Build(def, scale, mutation: MutationDef?) — optional 3rd param:
+  tint body/keycaps toward mutation.tint (Color3:Lerp 0.55), rainbow flag adds
+  a client-agnostic shimmer part tagged via attribute "Rainbow" (EffectsController
+  animates hue on it), glitched adds flicker attribute. Sets attribute
+  "Mutation" = id on the model.
+- HubBuilder: two leaderboard boards (named EarnedBoard / CollectionBoard) +
+  RacePad (named RacePad) on the plaza.
+
+### Client additions
+
+- UIController: mutation name+color on inventory/collection tiles and
+  celebration card ("GOLDEN Thunder!" prefix in mutation tint); rebirth panel
+  (rail button ⟳ visible at factory tier 12: shows cost, bonus preview, big
+  button -> RebirthRequest); index claim buttons in collection book (claimable
+  glow -> ClaimIndexReward); shop panel (rail button 🛒) listing gamepasses +
+  dev products from Config/Products (id==0 -> "Coming soon" disabled;
+  otherwise MarketplaceService:PromptGamePassPurchase / PromptProductPurchase);
+  boost timers shown under money HUD; likes count on own plot already visible
+  in world (no UI needed).
+- New `Controllers/EventController.luau`: watches Workspace attributes,
+  full-width event banner (name/tagline/countdown, event color), Lighting
+  presets ("storm": dark ambient + fog + occasional thunder sound via
+  rbxasset built-ins; "golden": warm ambient, ClockTime 17) with smooth
+  tween in/out and full restore.
+- New `Controllers/RaceController.luau`: RaceState UI — join hint banner,
+  countdown, live top-3 while racing, podium toast at finish.
+- SoundController: applies mutation soundPitchMult/extraJitter when playing
+  (KeyboardCollected payload + SoundPulse gain optional mutation field;
+  equipped local typing reads mutation from the equipped instance).
+- EffectsController: hue-cycles parts with attribute "Rainbow"; flickers
+  models with attribute "Mutation" == "glitched".
+
+### Phase-2 file ownership (parallel build)
+
+1. mutations-core: ProductionService, OfflineService, InventoryService edits (+KeyboardCollected payload), SoundController edits
+2. progression: RebirthService (new), IndexService (new), PadService edit (rebirth kind), PlotService edit (RebuildForProfile), DataService edit (default profile + reconcile only)
+3. world: PlotBuilder edits, KeyboardModel mutation param, HubBuilder additions (boards + race pad)
+4. services-social: LeaderboardService (new), LikeService (new), EventService (new)
+5. monetization: MonetizationService (new)
+6. race: TypingRaceService (new), EquipService edit (OnTypeAccepted hook)
+7. client-ui: UIController edits, EventController (new), RaceController (new), EffectsController edits
+8. init.server.luau / init.client.luau service list updates: integration (owner: main loop)

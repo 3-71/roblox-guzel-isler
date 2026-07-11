@@ -28,6 +28,10 @@ local REMOTE_NAMES = {
 	"OfflineReport",
 	"Notify",
 	"SoundPulse",
+	-- phase 2
+	"RebirthRequest", -- client -> server: perform rebirth (validated server-side)
+	"ClaimIndexReward", -- client -> server: rewardId string
+	"RaceState", -- server -> client: { phase, endsAt, scores? } typing-race updates
 }
 
 local Remotes = {}

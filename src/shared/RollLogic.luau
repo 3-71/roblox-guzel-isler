@@ -14,6 +14,9 @@ local GameConfig = require(script.Parent.Config.GameConfig)
 local FactoryTiers = require(script.Parent.Config.FactoryTiers)
 local Rarities = require(script.Parent.Config.Rarities)
 local Keyboards = require(script.Parent.Config.Keyboards)
+local Mutations = require(script.Parent.Config.Mutations)
+local IndexRewards = require(script.Parent.Config.IndexRewards)
+local Products = require(script.Parent.Config.Products)
 
 local RollLogic = {}
 
@@ -95,6 +98,73 @@ function RollLogic.RollKeyboard(factoryTier: number, luckLevel: number, rng: Ran
 		return 1
 	end
 	return candidates[rng:NextInteger(1, #candidates)]
+end
+
+-- Rolls a mutation (or nil). chanceMult scales every mutation's base chance
+-- (events / boosts); total mutation probability is capped at 90%.
+function RollLogic.RollMutation(rng: Random, chanceMult: number): string?
+	chanceMult = math.max(chanceMult, 0)
+	local total = 0
+	for _, mutation in Mutations do
+		total += mutation.chance * chanceMult
+	end
+	local cap = if total > 0.9 then 0.9 / total else 1
+	local roll = rng:NextNumber()
+	local cumulative = 0
+	for _, mutation in Mutations do
+		cumulative += mutation.chance * chanceMult * cap
+		if roll <= cumulative then
+			return mutation.id
+		end
+	end
+	return nil
+end
+
+-- The single source of truth for a player's total luck level. `profile` is a
+-- Types.Profile (typed loosely to avoid a require cycle with consumers).
+-- eventLuckBonus comes from the active server event (0 when none).
+function RollLogic.GetEffectiveLuck(profile: any, now: number, eventLuckBonus: number): number
+	local luck = profile.upgrades.luck
+
+	local rebirths = profile.rebirths or 0
+	luck += rebirths * GameConfig.Rebirth.LuckLevelsPerRebirth
+
+	local claimed = profile.indexClaimed
+	if claimed then
+		for _, reward in IndexRewards do
+			if claimed[reward.id] then
+				luck += reward.luck
+			end
+		end
+	end
+
+	local boosts = profile.boosts
+	if boosts then
+		for key, expiry in boosts do
+			if expiry > now then
+				if key == "serverLuckParty" then
+					-- granted to everyone when someone buys a Luck Party
+					for _, product in Products.DevProducts do
+						if product.key == "luckParty" then
+							luck += product.serverLuckBonus or 0
+						end
+					end
+				else
+					for _, product in Products.DevProducts do
+						if product.key == key then
+							luck += product.luckBonus or 0
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if profile.passes and profile.passes.doubleLuck then
+		luck *= 2
+	end
+
+	return luck + eventLuckBonus
 end
 
 return RollLogic

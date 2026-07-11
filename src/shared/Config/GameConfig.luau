@@ -47,6 +47,31 @@ local GameConfig = {
 	-- ===== Data =====
 	DataStoreName = "GrowAKeyboard_v1",
 	AutoSaveSeconds = 60,
+
+	-- ===== Rebirth =====
+	Rebirth = {
+		RequiredFactoryTier = 12, -- must own the final factory pad
+		BaseCost = 40_000_000,
+		CostMult = 2.5, -- cost = BaseCost * CostMult ^ rebirths
+		ValueBonusPerRebirth = 0.25, -- +25% sell value per rebirth, permanent
+		LuckLevelsPerRebirth = 1,
+	},
+
+	-- ===== Events (see Config/Events) =====
+	EventMinInterval = 480, -- seconds between event rolls
+	EventMaxInterval = 900,
+
+	-- ===== Typing race =====
+	Race = {
+		IntervalSeconds = 360, -- time between races
+		JoinWindowSeconds = 15,
+		DurationSeconds = 30,
+		BaseReward = 2_500, -- scaled by winner's factory tier
+	},
+
+	-- ===== Leaderboards =====
+	LeaderboardRefreshSeconds = 60,
+	LeaderboardSize = 25,
 }
 
 return GameConfig

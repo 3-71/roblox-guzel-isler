@@ -6,6 +6,7 @@ export type KeyboardInstance = {
 	uid: string, -- unique per instance (for equipping/display/future trading)
 	id: string, -- KeyboardDef id from Config/Keyboards
 	obtainedAt: number, -- unix time
+	mutation: string?, -- MutationDef id from Config/Mutations (nil = normal)
 }
 
 export type Upgrades = {
@@ -30,6 +31,14 @@ export type Profile = {
 	equippedUid: string?,
 	lastSeen: number,
 	firstJoin: number,
+	rebirths: number,
+	-- IndexReward ids already claimed (see Config/IndexRewards)
+	indexClaimed: { [string]: boolean },
+	likesReceived: number,
+	-- gamepass key -> owned (cached on join; see Config/Products)
+	passes: { [string]: boolean },
+	-- dev-product boost key -> unix expiry time
+	boosts: { [string]: number },
 }
 
 -- Payload of the DataSync remote: the full profile snapshot the client renders from.

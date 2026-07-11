@@ -101,4 +101,9 @@ for level, cost in displayCosts do
 	})
 end
 
+-- Rebirth altar: repeatable (never marked owned), appears once the final
+-- factory tier is bought. Cost is dynamic (GameConfig.Rebirth.BaseCost *
+-- CostMult ^ rebirths) — resolved by RebirthService, so cost here is -2.
+add({ id = "rebirth", kind = "rebirth", level = 1, name = "⟳ REBIRTH", cost = -2, prereq = "factory_12" })
+
 return Pads
