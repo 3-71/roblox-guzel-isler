@@ -742,19 +742,105 @@ local function buildOddsPanel()
 	renderers.odds = renderOdds
 end
 
+-- ===== rebirth panel =====
+
+local rebirthContent: Frame
+local rebirthArmed = false
+
+local function renderRebirth()
+	local p = profile
+	if not p then
+		return
+	end
+	for _, child in rebirthContent:GetChildren() do
+		if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	local rebirths = p.rebirths or 0
+	local cost = math.floor(GameConfig.Rebirth.BaseCost * GameConfig.Rebirth.CostMult ^ rebirths)
+	local valueBonus = math.floor(rebirths * GameConfig.Rebirth.ValueBonusPerRebirth * 100)
+	local tierReady = p.upgrades.factoryTier >= GameConfig.Rebirth.RequiredFactoryTier
+	local canAfford = p.money >= cost
+
+	mkText(rebirthContent, {
+		Size = UDim2.new(1, 0, 0, 40),
+		Position = UDim2.fromOffset(0, 4),
+		Text = `⟳ Rebirth {rebirths}`,
+		TextColor3 = ACCENT,
+	})
+	mkText(rebirthContent, {
+		Size = UDim2.new(1, 0, 0, 44),
+		Position = UDim2.fromOffset(0, 52),
+		Text = `Current bonus: +{valueBonus}% sell value\n+{rebirths * GameConfig.Rebirth.LuckLevelsPerRebirth} permanent luck`,
+		TextColor3 = TEXT_DIM,
+	})
+	mkText(rebirthContent, {
+		Size = UDim2.new(1, 0, 0, 44),
+		Position = UDim2.fromOffset(0, 104),
+		Text = `Next rebirth: +{math.floor(GameConfig.Rebirth.ValueBonusPerRebirth * 100)}% value, +{GameConfig.Rebirth.LuckLevelsPerRebirth} luck\nResets money, factory, and upgrade pads`,
+		TextColor3 = TEXT_DIM,
+	})
+	mkText(rebirthContent, {
+		Size = UDim2.new(1, 0, 0, 26),
+		Position = UDim2.fromOffset(0, 156),
+		Text = if tierReady
+			then `Cost: ${abbreviate(cost)}` .. (if canAfford then "" else " (not enough money)")
+			else `Requires Factory Tier {GameConfig.Rebirth.RequiredFactoryTier} (you: {p.upgrades.factoryTier})`,
+		TextColor3 = if tierReady and canAfford then GOOD else BAD,
+	})
+
+	local ready = tierReady and canAfford
+	local button = mkButton(rebirthContent, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -8),
+		Size = UDim2.fromOffset(220, 52),
+		Text = if rebirthArmed then "Really rebirth?" else "REBIRTH",
+		BackgroundColor3 = if not ready then PANEL_BG2 elseif rebirthArmed then BAD else ACCENT,
+		TextColor3 = if ready then Color3.new(0.1, 0.1, 0.12) else TEXT_DIM,
+	}, function()
+		if not ready then
+			return
+		end
+		if rebirthArmed then
+			rebirthArmed = false
+			Remotes.RebirthRequest:FireServer()
+		else
+			rebirthArmed = true
+			renderRebirth()
+			task.delay(3, function()
+				if rebirthArmed then
+					rebirthArmed = false
+					if openPanelName == "rebirth" then
+						renderRebirth()
+					end
+				end
+			end)
+		end
+	end)
+	corner(button, 12)
+end
+
+local function buildRebirthPanel()
+	local _panel, content = mkPanel("rebirth", "⟳ Rebirth", UDim2.fromOffset(340, 300))
+	rebirthContent = content
+	renderers.rebirth = renderRebirth
+end
+
 -- ===== button rail =====
 
 local function buildRail()
 	local rail = mkFrame(screenGui, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(60, 3 * 66),
+		Size = UDim2.fromOffset(60, 4 * 66),
 		BackgroundTransparency = 1,
 	})
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = rail
-	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" } } do
+	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" } } do
 		local b = mkButton(rail, {
 			Size = UDim2.fromOffset(56, 56),
 			Text = entry[2],
@@ -1042,10 +1128,11 @@ function UIController.Start()
 	screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 	buildMoneyHud()
-	buildRail()
 	buildInventoryPanel()
 	buildCollectionPanel()
 	buildOddsPanel()
+	buildRebirthPanel()
+	buildRail()
 	buildToasts()
 	watchSellZone()
 

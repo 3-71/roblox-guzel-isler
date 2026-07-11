@@ -51,6 +51,16 @@ local boundPlots: { [Player]: Model } = {}
 local touchDebounce: { [Player]: { [string]: number } } = {}
 local lastErrorAt: { [Player]: number } = {}
 
+-- kind "rebirth" pads are repeatable and have dynamic cost, so they bypass
+-- the normal buy flow entirely. RebirthService registers itself here in
+-- Init (a direct require would create a cycle: RebirthService needs
+-- PadService.RefreshPads after a rebirth reset).
+local rebirthHandler: ((Player) -> ())? = nil
+
+function PadService.SetRebirthHandler(handler: (Player) -> ())
+	rebirthHandler = handler
+end
+
 -- Maps a touching part back to a Player. hit.Parent is the character for
 -- limbs; accessories/tools are one level deeper, so walk up until we find
 -- a character model (bounded by the shallow character hierarchy).
@@ -118,6 +128,14 @@ local function onPadTouched(owner: Player, plot: Model, pad: PadDef, hit: BasePa
 	if profile == nil then
 		return
 	end
+
+	if pad.kind == "rebirth" then
+		if rebirthHandler ~= nil then
+			rebirthHandler(owner)
+		end
+		return
+	end
+
 	if profile.pads[pad.id] then
 		return -- already owned
 	end

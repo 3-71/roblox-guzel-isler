@@ -77,6 +77,7 @@ local PAD_KIND_COLORS: { [string]: Color3 } = {
 	luck = Color3.fromRGB(112, 220, 122), -- green
 	storage = Color3.fromRGB(168, 168, 178), -- grey
 	display = Color3.fromRGB(255, 142, 202), -- pink
+	rebirth = Color3.fromRGB(255, 245, 200), -- radiant white-gold
 }
 
 -- Visibility bookkeeping: original property values are parked in attributes
@@ -429,6 +430,8 @@ local function padLocalCFrame(kind: string, level: number): CFrame
 		return CFrame.new(-40, y, 0) -- left edge, mid-plot
 	elseif kind == "storage" then
 		return CFrame.new(40, y, 8) -- right edge, near the sell counter
+	elseif kind == "rebirth" then
+		return CFrame.new(0, y, 20) -- center stage, in front of the factory
 	end
 	return CFrame.new(30, y, -42) -- display: by the showcase row
 end
@@ -496,8 +499,14 @@ local function buildPads(plot: Model, origin: CFrame)
 		light.Brightness = 0.5
 		light.Parent = padPart
 
-		local costValue = Catalog.GetPadCost(padDef.id)
-		local costText = if costValue ~= nil then "$" .. abbreviate(costValue) else ""
+		local costText: string
+		if padDef.kind == "rebirth" then
+			-- Dynamic cost; RebirthService keeps this label current per player.
+			costText = "$" .. abbreviate(GameConfig.Rebirth.BaseCost)
+		else
+			local costValue = Catalog.GetPadCost(padDef.id)
+			costText = if costValue ~= nil then "$" .. abbreviate(costValue) else ""
+		end
 		addPadLabel(padPart, padDef.name, costText)
 
 		padModel.PrimaryPart = padPart
@@ -613,6 +622,20 @@ function PlotBuilder.SetPadVisible(plot: Model, padId: string, visible: boolean)
 	local padModel = padsFolder:FindFirstChild(padId)
 	if padModel ~= nil then
 		applyVisibility(padModel, visible)
+	end
+end
+
+-- Replaces a pad's cost line (dynamic-cost pads like rebirth).
+function PlotBuilder.SetPadLabel(plot: Model, padId: string, text: string)
+	local padsFolder = plot:FindFirstChild("Pads")
+	local padModel = if padsFolder then padsFolder:FindFirstChild(padId) else nil
+	if padModel == nil then
+		return
+	end
+	local label = padModel:FindFirstChild("Label", true)
+	local cost = if label then label:FindFirstChild("Cost") else nil
+	if cost ~= nil and cost:IsA("TextLabel") then
+		cost.Text = text
 	end
 end
 

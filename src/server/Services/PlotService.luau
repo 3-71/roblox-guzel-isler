@@ -144,6 +144,44 @@ local function setupPlot(player: Player, profile: Types.Profile)
 	spawnAtPlot(player, plot)
 end
 
+-- Tears down and rebuilds the player's plot on the SAME slot, replaying the
+-- profile's current pad ownership. Used after a rebirth resets progress:
+-- the fresh build restores tier-1 factory visuals, hides conveyors 2-4, and
+-- keeps whatever the profile still owns (display stands). In-flight belt
+-- items and displayed models die with the old plot; production loops and
+-- ShowcaseService re-resolve the new plot on their own.
+function PlotService.RebuildForProfile(player: Player)
+	local profile = DataService.GetProfile(player)
+	local oldPlot = playerToPlot[player]
+	local index = playerToIndex[player]
+	if profile == nil or oldPlot == nil or index == nil then
+		return
+	end
+
+	playerToPlot[player] = nil
+	plotToPlayer[oldPlot] = nil
+	pcall(PlotBuilder.Destroy, oldPlot)
+
+	local ok, plot = pcall(PlotBuilder.Build, index, player)
+	if not ok or typeof(plot) ~= "Instance" or not plot:IsA("Model") then
+		warn(`[PlotService] Rebuild failed for {player.Name}: {plot}`)
+		return
+	end
+	playerToPlot[player] = plot
+	plotToPlayer[plot] = player
+
+	for _, padId in ownedPadsInReplayOrder(profile) do
+		local applyOk, applyErr = pcall(PlotBuilder.OnPadPurchased, plot, padId)
+		if not applyOk then
+			warn(`[PlotService] OnPadPurchased rebuild replay failed for "{padId}": {applyErr}`)
+		end
+	end
+
+	PadService.BindPlot(player, plot)
+	PadService.RefreshPads(player)
+	spawnAtPlot(player, plot)
+end
+
 local function teardownPlot(player: Player)
 	local plot = playerToPlot[player]
 	if plot == nil then
