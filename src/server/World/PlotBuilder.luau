@@ -16,6 +16,7 @@
 --   SpawnPad              SpawnLocation (Enabled=false, Neutral=true —
 --                         PlotService assigns player.RespawnLocation)
 --   Sign                  Model showing "<name>'s Keyboard Farm"
+--                         (SetSignInfo refreshes like count + VIP styling)
 --
 -- Plot-local axes: -Z faces the hub (front of the plot), +Z is the back.
 
@@ -67,6 +68,7 @@ local PALETTE = {
 	spawn = Color3.fromRGB(196, 178, 255),
 	signBoard = Color3.fromRGB(255, 244, 222),
 	signText = Color3.fromRGB(92, 62, 40),
+	signGold = Color3.fromRGB(209, 150, 22), -- VIP sign text (readable on cream)
 	wood = Color3.fromRGB(172, 128, 86),
 }
 
@@ -636,6 +638,32 @@ function PlotBuilder.SetPadLabel(plot: Model, padId: string, text: string)
 	local cost = if label then label:FindFirstChild("Cost") else nil
 	if cost ~= nil and cost:IsA("TextLabel") then
 		cost.Text = text
+	end
+end
+
+-- Refreshes the plot sign (both faces): "<name>'s Keyboard Farm", plus
+-- "  ❤ <likes>" once the farm has likes, and a gold "👑 " VIP treatment.
+-- LikeService calls this on every like; MonetizationService on VIP detection.
+function PlotBuilder.SetSignInfo(plot: Model, ownerName: string, likes: number, vip: boolean)
+	local sign = plot:FindFirstChild("Sign")
+	if sign == nil then
+		return
+	end
+
+	local text = ownerName .. "'s Keyboard Farm"
+	if vip then
+		text = "👑 " .. text
+	end
+	if likes > 0 then
+		text = text .. "  ❤ " .. tostring(math.floor(likes))
+	end
+	local color = if vip then PALETTE.signGold else PALETTE.signText
+
+	for _, inst in sign:GetDescendants() do
+		if inst:IsA("TextLabel") then
+			inst.Text = text
+			inst.TextColor3 = color
+		end
 	end
 end
 

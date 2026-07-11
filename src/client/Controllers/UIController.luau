@@ -7,12 +7,15 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("Config"):WaitForChild("GameConfig"))
 local Rarities = require(Shared:WaitForChild("Config"):WaitForChild("Rarities"))
 local Keyboards = require(Shared:WaitForChild("Config"):WaitForChild("Keyboards"))
 local Events = require(Shared:WaitForChild("Config"):WaitForChild("Events"))
+local Products = require(Shared:WaitForChild("Config"):WaitForChild("Products"))
+local IndexRewards = require(Shared:WaitForChild("Config"):WaitForChild("IndexRewards"))
 local Catalog = require(Shared:WaitForChild("Catalog"))
 local RollLogic = require(Shared:WaitForChild("RollLogic"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
@@ -116,6 +119,11 @@ local function comma(n: number): string
 	return out
 end
 
+local function formatClock(seconds: number): string
+	seconds = math.max(math.floor(seconds), 0)
+	return string.format("%d:%02d", seconds // 60, seconds % 60)
+end
+
 local function isDisplayed(p: Types.Profile, uid: string): number?
 	for standIndex, displayedUid in p.displayed do
 		if displayedUid == uid then
@@ -181,6 +189,104 @@ local function animateMoney(target: number)
 			task.wait()
 		end
 		moneyLabel.Text = "$" .. abbreviate(target)
+	end)
+end
+
+-- ===== boost timer pills (under the money HUD) =====
+
+local boostsFrame: Frame
+
+local BOOST_FALLBACK_NAMES: { [string]: string } = {
+	serverLuckParty = "Server Luck Party",
+}
+
+local function boostDisplayName(key: string): string
+	for _, def in Products.DevProducts do
+		if def.key == key then
+			return def.name
+		end
+	end
+	return BOOST_FALLBACK_NAMES[key] or key
+end
+
+local function renderBoosts()
+	local p = profile
+	if not p then
+		return
+	end
+	for _, child in boostsFrame:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	local now = os.time()
+	local keys: { string } = {}
+	for key, expiry in p.boosts do
+		if typeof(expiry) == "number" and expiry > now then
+			table.insert(keys, key)
+		end
+	end
+	table.sort(keys)
+	for i, key in keys do
+		local remaining = (p.boosts[key] :: number) - now
+		local pill = mkFrame(boostsFrame, {
+			Size = UDim2.fromOffset(0, 24),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundColor3 = PANEL_BG,
+			BackgroundTransparency = 0.15,
+			LayoutOrder = i,
+		})
+		corner(pill, 12)
+		stroke(pill, GOOD, 1)
+		mkText(pill, {
+			Size = UDim2.new(0, 0, 1, 0),
+			AutomaticSize = Enum.AutomaticSize.X,
+			Text = `🍀 {boostDisplayName(key)} {formatClock(remaining)}`,
+			TextScaled = false,
+			TextSize = 14,
+			TextColor3 = GOOD,
+		})
+		local padding = Instance.new("UIPadding")
+		padding.PaddingLeft = UDim.new(0, 10)
+		padding.PaddingRight = UDim.new(0, 10)
+		padding.Parent = pill
+	end
+end
+
+local function buildBoostPills()
+	boostsFrame = mkFrame(screenGui, {
+		Name = "BoostPills",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 62),
+		Size = UDim2.fromOffset(620, 24),
+		BackgroundTransparency = 1,
+	})
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 8)
+	layout.Parent = boostsFrame
+
+	-- 1s ticker: keeps countdowns live and drops expired pills
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			local p = profile
+			local hasPills = boostsFrame:FindFirstChildOfClass("Frame") ~= nil
+			local hasActive = false
+			if p then
+				for _, expiry in p.boosts do
+					if typeof(expiry) == "number" and expiry > os.time() then
+						hasActive = true
+						break
+					end
+				end
+			end
+			if hasActive or hasPills then
+				renderBoosts()
+			end
+		end
 	end)
 end
 
@@ -559,6 +665,56 @@ end
 
 local collContent: Frame
 
+-- Claim strip above the grid: one chip per Config/IndexRewards entry.
+-- claimed = dim ✓ · claimable = glowing gold (click to claim) · locked = "n/m"
+local function renderIndexStrip(p: Types.Profile, discovered: number)
+	local strip = collContent:FindFirstChild("IndexStrip") :: Frame
+	for _, child in strip:GetChildren() do
+		if child:IsA("TextButton") or child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+	mkText(strip, {
+		Size = UDim2.fromOffset(62, 36),
+		Text = "Rewards",
+		TextScaled = false,
+		TextSize = 14,
+		TextColor3 = TEXT_DIM,
+		LayoutOrder = 0,
+	})
+	for i, reward in IndexRewards do
+		local claimed = p.indexClaimed[reward.id] == true
+		local claimable = not claimed and discovered >= reward.count
+		local chip = mkButton(strip, {
+			Size = UDim2.fromOffset(46, 36),
+			LayoutOrder = i,
+			Text = if claimed then "✓" elseif claimable then "$" .. abbreviate(reward.cash) else `{discovered}/{reward.count}`,
+			TextScaled = false,
+			TextSize = 14,
+			BackgroundColor3 = if claimable then ACCENT elseif claimed then PANEL_BG2 else Color3.fromRGB(28, 30, 36),
+			TextColor3 = if claimable then Color3.new(0.1, 0.1, 0.12) else TEXT_DIM,
+			Active = claimable,
+			AutoButtonColor = claimable,
+		}, function()
+			if claimable then
+				Remotes.ClaimIndexReward:FireServer(reward.id)
+			end
+		end)
+		corner(chip, 10)
+		if claimable then
+			local glow = stroke(chip, ACCENT, 2)
+			task.spawn(function()
+				while chip.Parent and glow.Parent do
+					TweenService:Create(glow, TweenInfo.new(0.8), { Transparency = 0.7 }):Play()
+					task.wait(0.8)
+					TweenService:Create(glow, TweenInfo.new(0.8), { Transparency = 0 }):Play()
+					task.wait(0.8)
+				end
+			end)
+		end
+	end
+end
+
 local function renderCollection()
 	local p = profile
 	if not p then
@@ -828,19 +984,132 @@ local function buildRebirthPanel()
 	renderers.rebirth = renderRebirth
 end
 
+-- ===== shop panel =====
+
+local shopContent: Frame
+
+local function renderShop()
+	local p = profile
+	if not p then
+		return
+	end
+	local scroll = shopContent:FindFirstChild("Scroll") :: ScrollingFrame
+	for _, child in scroll:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	local y = 0
+	local function sectionHeader(text: string)
+		local header = mkFrame(scroll, {
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, -8, 0, 24),
+			BackgroundTransparency = 1,
+		})
+		mkText(header, {
+			Size = UDim2.fromScale(1, 1),
+			Text = text,
+			TextColor3 = TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		y += 30
+	end
+
+	local function productRow(name: string, description: string, buttonText: string, enabled: boolean, accentColor: Color3, onBuy: () -> ())
+		local row = mkFrame(scroll, {
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, -8, 0, 62),
+			BackgroundColor3 = PANEL_BG2,
+		})
+		corner(row, 10)
+		mkText(row, {
+			Position = UDim2.fromOffset(10, 6),
+			Size = UDim2.new(1, -120, 0, 24),
+			Text = name,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		mkText(row, {
+			Position = UDim2.fromOffset(10, 32),
+			Size = UDim2.new(1, -120, 0, 24),
+			Text = description,
+			TextColor3 = TEXT_DIM,
+			TextScaled = false,
+			TextSize = 13,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+		})
+		local buy = mkButton(row, {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -8, 0.5, 0),
+			Size = UDim2.fromOffset(92, 40),
+			Text = buttonText,
+			BackgroundColor3 = if enabled then accentColor else PANEL_BG,
+			TextColor3 = if enabled then Color3.new(0.1, 0.1, 0.12) else TEXT_DIM,
+			Active = enabled,
+		}, function()
+			if enabled then
+				onBuy()
+			end
+		end)
+		corner(buy, 10)
+		y += 70
+	end
+
+	sectionHeader("GAMEPASSES — permanent")
+	for _, def in Products.GamePasses do
+		local owned = p.passes[def.key] == true
+		local configured = def.id ~= 0
+		productRow(
+			def.name,
+			def.description,
+			if owned then "OWNED" elseif configured then "Buy" else "Soon",
+			configured and not owned,
+			ACCENT,
+			function()
+				MarketplaceService:PromptGamePassPurchase(localPlayer, def.id)
+			end
+		)
+	end
+
+	sectionHeader("BOOSTS & MORE")
+	for _, def in Products.DevProducts do
+		local configured = def.id ~= 0
+		productRow(def.name, def.description, if configured then "Buy" else "Soon", configured, GOOD, function()
+			MarketplaceService:PromptProductPurchase(localPlayer, def.id)
+		end)
+	end
+
+	scroll.CanvasSize = UDim2.fromOffset(0, y + 8)
+end
+
+local function buildShopPanel()
+	local _panel, content = mkPanel("shop", "🛒 Shop", UDim2.fromOffset(400, 480))
+	shopContent = content
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Scroll"
+	scroll.Size = UDim2.fromScale(1, 1)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.Parent = content
+	renderers.shop = renderShop
+end
+
 -- ===== button rail =====
 
 local function buildRail()
 	local rail = mkFrame(screenGui, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(60, 4 * 66),
+		Size = UDim2.fromOffset(60, 5 * 66),
 		BackgroundTransparency = 1,
 	})
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = rail
-	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" } } do
+	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" } } do
 		local b = mkButton(rail, {
 			Size = UDim2.fromOffset(56, 56),
 			Text = entry[2],
@@ -1128,10 +1397,12 @@ function UIController.Start()
 	screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 	buildMoneyHud()
+	buildBoostPills()
 	buildInventoryPanel()
 	buildCollectionPanel()
 	buildOddsPanel()
 	buildRebirthPanel()
+	buildShopPanel()
 	buildRail()
 	buildToasts()
 	watchSellZone()
@@ -1139,6 +1410,7 @@ function UIController.Start()
 	Remotes.DataSync.OnClientEvent:Connect(function(snapshot: Types.Profile)
 		profile = snapshot
 		animateMoney(snapshot.money)
+		renderBoosts()
 		if openPanelName then
 			renderers[openPanelName]()
 		end

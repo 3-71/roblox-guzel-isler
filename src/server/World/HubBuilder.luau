@@ -10,6 +10,14 @@
 -- disc under the whole map keeps players from falling into the void between
 -- hub and plots. Call Build() once at startup, before PlotService accepts
 -- players.
+--
+-- Phase 2 contract: three named instances live DIRECTLY under Workspace.Hub
+-- (siblings of HubIsland, so workspace.Hub:FindFirstChild(name) finds them):
+--   EarnedBoard / CollectionBoard   angled board Parts, each with a SurfaceGui
+--                                   holding "Title" + "List" TextLabels
+--                                   (LeaderboardService writes the List text)
+--   RacePad                         flat glowing pad Part players stand on to
+--                                   join races (TypingRaceService)
 
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -26,6 +34,9 @@ local HubBuilder = {}
 local PLAZA_RADIUS = 42
 local GRASS_RADIUS = 58
 local MONUMENT_KEYBOARD_ID = "blueberry" -- bright + chunky, reads well huge
+local PLAZA_TOP_Y = 0.2 -- top surface of the Plaza cylinder (1.2 tall, centred at y = -0.4)
+local BOARD_RADIUS = 33 -- leaderboard boards' distance from the plaza centre
+local RACE_PAD_DIAMETER = 14
 
 local PALETTE = {
 	ground = Color3.fromRGB(106, 172, 88),
@@ -42,6 +53,9 @@ local PALETTE = {
 	signText = Color3.fromRGB(92, 62, 40),
 	spawn = Color3.fromRGB(170, 226, 200),
 	pedestal = Color3.fromRGB(214, 208, 196),
+	boardGold = Color3.fromRGB(255, 199, 68),
+	boardBlue = Color3.fromRGB(137, 180, 250),
+	race = Color3.fromRGB(92, 225, 240),
 }
 
 -- Pastel keycap cubes decorating the top of the big sign.
@@ -185,14 +199,146 @@ local function buildMonument(hub: Model)
 	end
 end
 
-function HubBuilder.Build(): Model
-	local hubFolder = Workspace:FindFirstChild("Hub")
-	if hubFolder == nil or not hubFolder:IsA("Folder") then
-		local folder = Instance.new("Folder")
-		folder.Name = "Hub"
-		folder.Parent = Workspace
-		hubFolder = folder
+-- ===== Phase 2: plaza leaderboard boards + typing-race pad =====
+-- These are parented DIRECTLY to the Workspace.Hub folder (not inside the
+-- HubIsland model) so LeaderboardService / TypingRaceService reach them with a
+-- plain workspace.Hub:FindFirstChild("EarnedBoard"/"CollectionBoard"/"RacePad").
+
+local function getHubFolder(): Folder
+	local existing = Workspace:FindFirstChild("Hub")
+	if existing ~= nil and existing:IsA("Folder") then
+		return existing
 	end
+	local folder = Instance.new("Folder")
+	folder.Name = "Hub"
+	folder.Parent = Workspace
+	return folder
+end
+
+-- One big angled notice board on wooden posts, leaning back like a menu sign,
+-- facing the plaza centre. Replaces any previous board of the same name.
+local function buildBoard(hubFolder: Folder, name: string, titleText: string, accent: Color3, angle: number): Part
+	local old = hubFolder:FindFirstChild(name)
+	if old ~= nil then
+		old:Destroy()
+	end
+
+	local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+	local basePos = direction * BOARD_RADIUS
+	local footCF = CFrame.lookAt(Vector3.new(basePos.X, PLAZA_TOP_Y, basePos.Z), Vector3.new(0, PLAZA_TOP_Y, 0))
+
+	local board = part(
+		name,
+		Vector3.new(14, 10, 0.8),
+		footCF * CFrame.new(0, 9, 0.35) * CFrame.Angles(math.rad(12), 0, 0),
+		PALETTE.signBoard,
+		Enum.Material.WoodPlanks,
+		hubFolder
+	)
+
+	-- Posts are parented to the board Part so the whole assembly is one unit
+	-- (found, moved, or destroyed together via the contract name).
+	part("BoardPost", Vector3.new(1.1, 8, 1.1), footCF * CFrame.new(-5.6, 4, 0.35), PALETTE.wood, Enum.Material.WoodPlanks, board)
+	part("BoardPost", Vector3.new(1.1, 8, 1.1), footCF * CFrame.new(5.6, 4, 0.35), PALETTE.wood, Enum.Material.WoodPlanks, board)
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front -- -Z face looks at the plaza centre
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 40
+	gui.LightInfluence = 0
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, 0, 0, 64)
+	title.Font = Enum.Font.FredokaOne
+	title.Text = titleText
+	title.TextScaled = true
+	title.TextColor3 = accent
+	title.TextStrokeColor3 = PALETTE.signText
+	title.TextStrokeTransparency = 0.6
+	title.Parent = gui
+
+	local list = Instance.new("TextLabel")
+	list.Name = "List"
+	list.BackgroundTransparency = 1
+	list.Position = UDim2.new(0, 20, 0, 72)
+	list.Size = UDim2.new(1, -40, 1, -84)
+	list.Font = Enum.Font.GothamMedium
+	list.Text = "Loading..."
+	list.TextSize = 22
+	list.RichText = true
+	list.TextWrapped = false
+	list.TextXAlignment = Enum.TextXAlignment.Left
+	list.TextYAlignment = Enum.TextYAlignment.Top
+	list.TextColor3 = PALETTE.signText
+	list.Parent = gui
+
+	gui.Parent = board
+	return board
+end
+
+local function buildRacePad(hubFolder: Folder)
+	local old = hubFolder:FindFirstChild("RacePad")
+	if old ~= nil then
+		old:Destroy()
+	end
+
+	local step = math.pi * 2 / math.max(GameConfig.PlotCount, 1)
+	local angle = 3.5 * step -- between two paths, clear of monument / sign / spawn
+	local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+	local basePos = direction * 22
+
+	local pad = cylinder(
+		"RacePad",
+		0.5,
+		RACE_PAD_DIAMETER,
+		CFrame.new(basePos.X, PLAZA_TOP_Y + 0.25, basePos.Z),
+		PALETTE.race,
+		Enum.Material.Neon,
+		hubFolder
+	)
+
+	local light = Instance.new("PointLight")
+	light.Color = PALETTE.race
+	light.Range = 16
+	light.Brightness = 0.7
+	light.Parent = pad
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Label"
+	gui.Size = UDim2.new(16, 0, 4, 0)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 7, 0)
+	gui.MaxDistance = 140
+	gui.LightInfluence = 0
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.FredokaOne
+	label.Text = "⌨ TYPING RACE — stand here when a race starts!"
+	label.TextScaled = true
+	label.TextWrapped = true
+	label.TextColor3 = PALETTE.race
+	label.TextStrokeColor3 = Color3.fromRGB(30, 55, 60)
+	label.TextStrokeTransparency = 0.2
+	label.Parent = gui
+	gui.Parent = pad
+end
+
+-- Builds (or rebuilds, replacing in place) the two plaza leaderboard boards
+-- and returns (EarnedBoard, CollectionBoard). Build() already calls this, so
+-- the boards exist by the time any service starts; calling again is safe.
+function HubBuilder.BuildLeaderboards(): (Part, Part)
+	local hubFolder = getHubFolder()
+	local step = math.pi * 2 / math.max(GameConfig.PlotCount, 1)
+	-- Flanking the big sign (angle 6.5 * step): one board on each side.
+	local earned = buildBoard(hubFolder, "EarnedBoard", "🏆 RICHEST", PALETTE.boardGold, 5.5 * step)
+	local collection = buildBoard(hubFolder, "CollectionBoard", "📖 BEST COLLECTION", PALETTE.boardBlue, 7.5 * step)
+	return earned, collection
+end
+
+function HubBuilder.Build(): Model
+	local hubFolder = getHubFolder()
 	local existing = hubFolder:FindFirstChild("HubIsland")
 	if existing ~= nil then
 		existing:Destroy()
@@ -264,6 +410,11 @@ function HubBuilder.Build(): Model
 
 	hub.PrimaryPart = plaza
 	hub.Parent = hubFolder
+
+	-- Phase 2 plaza furniture (siblings of HubIsland — see contract above).
+	HubBuilder.BuildLeaderboards()
+	buildRacePad(hubFolder)
+
 	return hub
 end
 

@@ -128,7 +128,11 @@ local function onDisplayRequest(player: Player, standIndex: unknown, uid: unknow
 	if standIndex < 1 or standIndex > GameConfig.MaxDisplayStands then
 		return
 	end
-	if profile.upgrades.displays < standIndex then
+	-- extraStands gamepass: +2 stands beyond the pad-purchased count, clamped
+	-- to the plot's physical maximum.
+	local bonusStands = if profile.passes.extraStands then 2 else 0
+	local unlockedStands = math.min(profile.upgrades.displays + bonusStands, GameConfig.MaxDisplayStands)
+	if unlockedStands < standIndex then
 		Remotes.Notify:FireClient(player, "error", "That display stand is locked — buy its pad first!")
 		return
 	end

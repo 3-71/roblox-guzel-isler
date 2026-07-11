@@ -27,6 +27,10 @@ local serviceModules = {
 	require(Services.EventService),
 	require(Services.IndexService),
 	require(Services.RebirthService),
+	require(Services.MonetizationService),
+	require(Services.LeaderboardService),
+	require(Services.LikeService),
+	require(Services.TypingRaceService),
 }
 
 for _, service in serviceModules do
