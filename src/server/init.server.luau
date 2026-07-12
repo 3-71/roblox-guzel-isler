@@ -34,6 +34,7 @@ local serviceModules = {
 	-- phase 3
 	require(Services.RestockShopService),
 	require(Services.GiftService),
+	require(Services.StreakService),
 }
 
 for _, service in serviceModules do

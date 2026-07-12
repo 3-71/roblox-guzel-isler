@@ -243,6 +243,12 @@ function RollLogic.GetEffectiveLuck(profile: any, now: number, eventLuckBonus: n
 		end
 	end
 
+	-- Daily login streak: +LuckPerDay per consecutive day, capped.
+	local streakDays = profile.streakDays or 0
+	if streakDays > 0 then
+		luck += math.min(streakDays * GameConfig.Streak.LuckPerDay, GameConfig.Streak.MaxLuckBonus)
+	end
+
 	if profile.passes and profile.passes.doubleLuck then
 		luck *= 2
 	end

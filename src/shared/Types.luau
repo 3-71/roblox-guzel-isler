@@ -44,6 +44,10 @@ export type Profile = {
 	-- newest ~50 finalized dev-product PurchaseIds (receipt idempotency across
 	-- sessions; see MonetizationService.processReceipt)
 	grantedReceipts: { string },
+	-- daily login streak (StreakService): consecutive days + last counted
+	-- UTC day number (os.time() // 86400)
+	streakDays: number,
+	streakLastDay: number,
 }
 
 -- Payload of the DataSync remote: the full profile snapshot the client renders from.

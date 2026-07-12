@@ -72,6 +72,8 @@ local function defaultProfile(): Types.Profile
 		boosts = {},
 		pity = 0,
 		grantedReceipts = {},
+		streakDays = 0,
+		streakLastDay = 0,
 	}
 end
 

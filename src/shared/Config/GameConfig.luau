@@ -94,6 +94,12 @@ local GameConfig = {
 		IntervalSeconds = 300, -- wall-clock aligned: restocks at :00/:05/:10...
 		Slots = 3,
 	},
+
+	-- ===== Daily login streak =====
+	Streak = {
+		LuckPerDay = 1, -- bonus luck levels per consecutive day online
+		MaxLuckBonus = 5, -- cap: a 5+ day streak grants +5 luck
+	},
 }
 
 return GameConfig
