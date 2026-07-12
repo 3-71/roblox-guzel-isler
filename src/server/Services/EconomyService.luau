@@ -67,6 +67,18 @@ local function friendCount(player: Player): number
 	return count
 end
 
+-- Pairs whose IsFriendsWith web call is in flight, keyed "loUserId:hiUserId".
+-- Guards the contract's ONE web call per pair: refreshFriendships runs from
+-- both PlayerAdded and OnProfileLoaded, which overlap before the first call
+-- resolves (the cache is only written after the pcall returns).
+local pendingPairs: { [string]: boolean } = {}
+
+local function pairKey(a: Player, b: Player): string
+	local lo = math.min(a.UserId, b.UserId)
+	local hi = math.max(a.UserId, b.UserId)
+	return lo .. ":" .. hi
+end
+
 -- Resolves one (a, b) pair via IsFriendsWith and caches both directions.
 -- Yields (web call), so it always runs inside task.spawn; a pcall failure
 -- caches "not friends" — the bonus only ever under-counts, never errors.
@@ -75,9 +87,15 @@ local function cachePair(a: Player, b: Player)
 	if mapA == nil or mapA[b] ~= nil then
 		return -- a left, or this pair was already checked
 	end
+	local key = pairKey(a, b)
+	if pendingPairs[key] then
+		return -- this pair is already being resolved; it caches both directions
+	end
+	pendingPairs[key] = true
 	local ok, result = pcall(function()
 		return a:IsFriendsWith(b.UserId)
 	end)
+	pendingPairs[key] = nil
 	local isFriend = ok and result == true
 	-- Re-fetch: either player may have left during the web call.
 	mapA = friendsWith[a]
