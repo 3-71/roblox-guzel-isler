@@ -102,6 +102,32 @@ local GameConfig = {
 		LuckPerDay = 1, -- bonus luck levels per consecutive day online
 		MaxLuckBonus = 5, -- cap: a 5+ day streak grants +5 luck
 	},
+
+	-- ===== Display aging =====
+	-- DISPLAYED keyboards age while on a stand; a board's stage is the
+	-- HIGHEST threshold it has passed (see Catalog.GetAgeStage). Stage
+	-- valueMult applies in Catalog.GetSellValue.
+	Aging = {
+		TickSeconds = 60, -- ShowcaseService loop interval = seconds added per tick
+		OfflineRateMult = 0.5, -- displayed boards age at half speed while offline
+		Stages = {
+			{ name = "Broken-In", seconds = 1800, valueMult = 1.15 },
+			{ name = "Seasoned", seconds = 7200, valueMult = 1.4 },
+			{ name = "Ancient", seconds = 28800, valueMult = 2.0 },
+		},
+	},
+
+	-- ===== Fusion (see FusionService) =====
+	Fusion = {
+		Required = 3, -- identical duplicates consumed per fuse
+		MaxStars = 5,
+		ValueMultPerStar = 1.6, -- sell value *= this ^ stars
+	},
+
+	-- ===== Secrets (see SecretService) =====
+	Secrets = {
+		WholesomeLikes = 15, -- likesGiven needed for the Wholesome secret
+	},
 }
 
 return GameConfig

@@ -1,5 +1,6 @@
 --!strict
--- All 36 named collectible keyboards: 3 per rarity tier.
+-- All 36 named collectible keyboards (3 per rarity tier), plus the secret
+-- boards appended at the end (`secret = true` — they never roll).
 -- A production roll first picks a rarity (see Shared.RollLogic), then a
 -- uniform-random keyboard within that tier.
 --
@@ -32,6 +33,10 @@ export type KeyboardDef = {
 		accentColor: Color3,
 		style: string, -- "plain" | "retro" | "slim" | "chunky" | "split" | "crystal"
 	},
+	-- Secret boards never roll (RollLogic skips them); they are discovered
+	-- via rituals (see SecretService), excluded from the "N/36" counter
+	-- (Catalog.CountDiscoverable) and belong to no Config/Sets set.
+	secret: boolean?,
 }
 
 -- Engine-shipped audio (present in every Roblox client install, no upload
@@ -302,6 +307,26 @@ local Keyboards: { KeyboardDef } = {
 		flavor = "The first keyboard ever made. Or the last. Records disagree.",
 		sound = snd(0.03, layer(SNAP, 0.5, 0.8), layer(PING, 0.55, 0.5), layer(WIND, 0.8, 0.2)),
 		look = { bodyColor = Color3.fromRGB(240, 235, 220), keycapColor = Color3.fromRGB(30, 30, 30), accentColor = Color3.fromRGB(200, 170, 90), style = "retro" },
+	},
+
+	-- ============ Secrets (never roll — discovered via rituals) ============
+	{
+		id = "the_password", name = "The Password", rarityTier = 12, secret = true,
+		flavor = "Five letters, whispered by every keyboard sage. Type the sacred word and it answers.",
+		sound = snd(0.02, layer(THUMP, 0.55, 0.9), layer(SNAP, 1.15, 0.45), layer(PING, 1.4, 0.35)),
+		look = { bodyColor = Color3.fromRGB(14, 22, 16), keycapColor = Color3.fromRGB(45, 240, 130), accentColor = Color3.fromRGB(160, 255, 190), style = "retro" },
+	},
+	{
+		id = "oofboard", name = "The OOFboard", rarityTier = 12, secret = true,
+		flavor = "Built on the legend. Every keystroke falls, respawns, and falls again.",
+		sound = snd(0.15, layer(OOF, 1.0, 0.85), layer(OOF, 0.75, 0.45), layer(RATTLE, 0.9, 0.2)),
+		look = { bodyColor = Color3.fromRGB(196, 40, 28), keycapColor = Color3.fromRGB(245, 243, 240), accentColor = Color3.fromRGB(35, 35, 40), style = "chunky" },
+	},
+	{
+		id = "wholesome", name = "Wholesome", rarityTier = 12, secret = true,
+		flavor = "Grown from pure kindness. Every key types a compliment.",
+		sound = snd(0.05, layer(PING, 1.45, 0.45), layer(SWISH, 1.15, 0.3), layer(WIND, 1.5, 0.2)),
+		look = { bodyColor = Color3.fromRGB(255, 214, 194), keycapColor = Color3.fromRGB(255, 247, 238), accentColor = Color3.fromRGB(255, 160, 140), style = "chunky" },
 	},
 }
 

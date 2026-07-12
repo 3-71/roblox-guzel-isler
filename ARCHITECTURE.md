@@ -380,3 +380,143 @@ separate gold line for mutationBonus.
 6. race: TypingRaceService (new), EquipService edit (OnTypeAccepted hook)
 7. client-ui: UIController edits, EventController (new), RaceController (new), EffectsController edits
 8. init.server.luau / init.client.luau service list updates: integration (owner: main loop)
+
+---
+
+# Phase 4 — Collection Update: secrets, sets, vault, fusion, aging
+
+Shared contracts (DONE — consume, don't restructure):
+`Types.KeyboardInstance.locked/stars/ageSeconds`,
+`Types.Profile.likesGiven/setsClaimed`, `Types.CollectedPayload.stars`,
+Remotes `VaultRequest`/`FuseRequest`, `GameConfig.Aging/Fusion/Secrets`,
+`Config/Sets` (all 36 discoverable ids partitioned into 6 themed sets of 6),
+`Config/Keyboards` secret boards (`secret = true`: `the_password`, `oofboard`,
+`wholesome` — never roll, no set, excluded from the 36-counter),
+`RollLogic.RollKeyboard` skips secret defs, `RollLogic.GetEffectiveLuck` adds
+claimed-set luckBonus, `Catalog.GetSellValue(keyboardId, factoryTier,
+mutation?, rebirths?, stars?, ageSeconds?)` (nil-safe: old call sites
+unchanged), `Catalog.GetAgeStage(ageSeconds?)`, `Catalog.GetSet(keyboardId)`,
+`Catalog.CountDiscoverable()`.
+
+Cross-cutting rules:
+- EVERY sell-value read for an owned instance now passes the instance's
+  `stars` and `ageSeconds` (the extra args are nil-safe; flows you don't own
+  keep working untouched, but flows you DO own must pass them).
+- LOCKED (vaulted) instances are excluded from every destructive flow:
+  selling (both modes), gifting, fusion inputs. Equip/display stay allowed.
+- DataService default profile + reconcile must cover the new Profile fields
+  (likesGiven=0, setsClaimed={}). KeyboardInstance.locked/stars/ageSeconds
+  are optional — old saved instances need no reconcile.
+- Secret grants use the normal `InventoryService.AddKeyboard` path so the
+  full ceremony (KeyboardCollected, flex, MarkDirty+Sync) fires.
+
+### New/changed server services (Init/Start pattern, appended to bootstrap order)
+
+**SecretService** (NEW — `Services/SecretService.luau`) — ritual-typed secret
+boards. EquipService change: `TypeKeyRequest` gains an optional `letter`
+argument — the client sends the pressed key's single character when it is A-Z;
+the server validates `typeof(letter) == "string"`, `#letter == 1`, alphabetic,
+then uppercases it (anything invalid is treated as nil; the press still counts
+for typing sounds/races). `EquipService.OnTypeAccepted` callbacks now receive
+`(player, letter: string?)` — TypingRaceService ignores the new argument.
+SecretService subscribes to OnTypeAccepted and keeps a per-player rolling
+buffer of accepted letters (max 12 chars, cleared on unequip and on leave).
+When the buffer ends with `"THOCK"` → grant `the_password`; `"OOF"` → grant
+`oofboard` — once each; skip when the id is already in `profile.collection`.
+Grants go through `InventoryService.AddKeyboard(player, id, "secret")`.
+Public: `SecretService.CheckWholesome(player)` — grants `wholesome` (same
+once-only rule) when `profile.likesGiven >= GameConfig.Secrets.WholesomeLikes`.
+LikeService edit: after incrementing the OWNER's likesReceived, ALSO bump the
+LIKER's `profile.likesGiven` (+MarkDirty+Sync the giver), then call
+`SecretService.CheckWholesome(giver)`.
+
+**SetsService** (NEW — `Services/SetsService.luau`) — auto-claims completed
+collection sets. Public: `SetsService.CheckSets(player)` — for each
+`Config/Sets` SetDef not yet in `profile.setsClaimed`: if all 6 keyboardIds
+are discovered (`profile.collection[id]` and `> 0`), set
+`profile.setsClaimed[set.id] = true`, Notify ALL ("flex",
+`<player> completed the <name> set (+1 permanent luck)!`), MarkDirty+Sync.
+The luck applies automatically via `RollLogic.GetEffectiveLuck` — no other
+wiring. Called from: `DataService.OnProfileLoaded` subscription (claims sets
+completed before this update), and by InventoryService at the END of
+`AddKeyboard` via a lazy pcall-require of SetsService (avoids a require
+cycle; if the module isn't loaded yet the pcall just no-ops).
+
+**Vault** (InventoryService edit) — `InventoryService.Start` connects
+`VaultRequest(uid, locked)` (rate limit: 3/s token bucket per player):
+validate uid owned, `typeof(locked) == "boolean"`, set `instance.locked`
+(store `true` or nil — don't persist `false`), MarkDirty+Sync. Consumers:
+EconomyService sell flows (BOTH modes — "uids" skips locked uids, "belowTier"
+never selects them), GiftService rejects locked uids, FusionService never
+picks locked inputs.
+
+**FusionService** (NEW — `Services/FusionService.luau`) — handles
+`FuseRequest(keyboardId)` (rate limit: 1 per 2s per player). Validate
+keyboardId is a string and `Catalog.GetKeyboard` resolves it. Candidates:
+the sender's instances of that id that are unlocked, unequipped, undisplayed.
+Group candidates by star value (`stars or 0`), ignore groups at
+`GameConfig.Fusion.MaxStars`, and pick the LOWEST star value whose group has
+`>= GameConfig.Fusion.Required` — fusing three 0-star makes a 1-star, three
+1-star a 2-star, etc.; mixed-star fusing is never allowed. Within the chosen
+group remove the `Required` cheapest (by `Catalog.GetSellValue` with the
+instance's mutation/stars/ageSeconds at the player's factory tier) via
+`InventoryService.RemoveKeyboards`, then add one instance of the same id with
+`stars + 1` (cap MaxStars): `InventoryService.AddKeyboard` gains an optional
+5th argument `stars: number?` stored on the new instance —
+`AddKeyboard(player, keyboardId, source, mutation?, stars?)`; the
+`KeyboardCollected` payload carries the new `stars` field; source `"fusion"`.
+Notify the fuser; server-wide flex when the RESULT has stars >= 3.
+
+**Aging** (ShowcaseService + OfflineService edits) — displayed keyboards age.
+`ShowcaseService.Start` gains a loop every `GameConfig.Aging.TickSeconds`:
+for each online player's DISPLAYED instances, `ageSeconds += TickSeconds`
+(init nil → TickSeconds), MarkDirty; compare `Catalog.GetAgeStage` before vs
+after — ONE Sync per player per tick only if any instance crossed a stage
+boundary, otherwise stay silent (no Sync spam). When a displayed instance's
+stage changes, re-render its stand: the nameplate gains a gold
+`" · <stage name>"` suffix. `KeyboardModel.Build` gains an optional 4th
+argument `ageStage: number?` (index into `GameConfig.Aging.Stages`, nil =
+none): tint the body toward warm bronze by `ageStage * 0.12` lerp, and add a
+soft gold PointLight at the final stage (Ancient). OfflineService edit: the
+offline processor adds `secondsAway * GameConfig.Aging.OfflineRateMult` to
+every DISPLAYED instance's ageSeconds (before the OnProfileLoaded rebuild, so
+stands render the right stage on join).
+
+### World additions (HubBuilder edit)
+
+- **FusionForge** — `HubBuilder.Build` adds a "FusionForge" Model as a direct
+  child of `Workspace.Hub` (idempotent: skip if it already exists): a chunky
+  low-poly machine — hopper, lever, chimney — with a BillboardGui
+  "⚒ FUSION FORGE — fuse 3 duplicates!". Visual/landmark only; fusion is
+  driven entirely from the inventory UI.
+
+### Client additions (UIController edits)
+
+- Inventory tiles: a ★ row showing the instance's stars, and a 🔒 badge when
+  locked. Action overlay per tile gains a "Lock"/"Unlock" toggle (fires
+  `VaultRequest(uid, locked)`) and a "Fuse 3 duplicates" button — enabled when
+  the player owns >= 3 fusable copies of that id (unlocked, unequipped,
+  undisplayed, same star group below MaxStars — mirror the server rule);
+  fires `FuseRequest(keyboardId)`.
+- Collection book: secrets render in a separate "???" row — dark silhouette
+  until discovered; discovered shows the name plus a "SECRET" tag. The
+  progress header's denominator comes from `Catalog.CountDiscoverable()`
+  (secrets don't count toward "N/36").
+- Sets strip in the collection panel: one chip per `Config/Sets` entry
+  showing `emoji + discovered/6`, rendered gold once `setsClaimed[set.id]`.
+- Display nameplates: the age-stage suffix arrives from the server — the
+  client does NO aging math.
+
+### Phase-4 ownership (parallel build — do NOT edit files outside your set)
+
+1. secrets-server: SecretService (NEW), EquipService edit (letter arg +
+   OnTypeAccepted signature), LikeService edit (likesGiven + CheckWholesome)
+2. sets-vault: SetsService (NEW), InventoryService edits (VaultRequest,
+   CheckSets call, AddKeyboard stars arg), EconomyService + GiftService
+   locked exclusions
+3. aging-fusion: FusionService (NEW), ShowcaseService aging loop + stand
+   re-render, OfflineService aging, KeyboardModel ageStage/star visuals
+4. world: HubBuilder edit (FusionForge)
+5. client: UIController edits
+6. init.server.luau wiring (SecretService/SetsService/FusionService appended
+   to the bootstrap order): integration

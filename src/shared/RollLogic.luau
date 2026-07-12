@@ -16,6 +16,9 @@
 -- TargetTier shifts proportionally onto TargetTier+ (hard guarantee at
 -- HardGuarantee rolls). When the factory's rarity ceiling is below TargetTier
 -- pity is inert. Omitting the argument keeps the pre-pity behavior exactly.
+--
+-- Secret keyboards (Config/Keyboards `secret = true`) NEVER roll: RollKeyboard
+-- skips them when picking within the rolled tier (they're ritual-granted).
 
 local GameConfig = require(script.Parent.Config.GameConfig)
 local FactoryTiers = require(script.Parent.Config.FactoryTiers)
@@ -24,6 +27,7 @@ local Keyboards = require(script.Parent.Config.Keyboards)
 local Mutations = require(script.Parent.Config.Mutations)
 local IndexRewards = require(script.Parent.Config.IndexRewards)
 local Products = require(script.Parent.Config.Products)
+local Sets = require(script.Parent.Config.Sets)
 
 local RollLogic = {}
 
@@ -143,12 +147,13 @@ function RollLogic.RollRarity(factoryTier: number, luckLevel: number, rng: Rando
 end
 
 -- Rolls a full keyboard: rarity tier first, then uniform pick within tier.
--- Returns the keyboard's index into Config/Keyboards.
+-- Returns the keyboard's index into Config/Keyboards. Secret defs are never
+-- candidates (see header).
 function RollLogic.RollKeyboard(factoryTier: number, luckLevel: number, rng: Random, pityCount: number?): number
 	local tier = RollLogic.RollRarity(factoryTier, luckLevel, rng, pityCount)
 	local candidates = {}
 	for index, def in Keyboards do
-		if def.rarityTier == tier then
+		if def.rarityTier == tier and not def.secret then
 			table.insert(candidates, index)
 		end
 	end
@@ -214,6 +219,16 @@ function RollLogic.GetEffectiveLuck(profile: any, now: number, eventLuckBonus: n
 		for _, reward in IndexRewards do
 			if claimed[reward.id] then
 				luck += reward.luck
+			end
+		end
+	end
+
+	-- Completed collection sets (auto-claimed by SetsService; see Config/Sets).
+	local setsClaimed = profile.setsClaimed
+	if setsClaimed then
+		for _, set in Sets do
+			if setsClaimed[set.id] then
+				luck += set.luckBonus
 			end
 		end
 	end
