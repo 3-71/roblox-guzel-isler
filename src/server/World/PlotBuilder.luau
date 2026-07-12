@@ -310,17 +310,85 @@ local function buildFactory(plot: Model, origin: CFrame)
 	part("FactoryWall", Vector3.new(42, 4, 2), origin * CFrame.new(0, 13, 33), wallColor, nil, factory)
 
 	part("FactoryRoof", Vector3.new(56, 1.5, 28), origin * CFrame.new(0, 15.75, 44), PALETTE.roof, Enum.Material.WoodPlanks, factory)
-	part("Chimney", Vector3.new(4, 20, 4), origin * CFrame.new(18, 15, 50), PALETTE.chimney, nil, factory)
-	part("ChimneyCap", Vector3.new(5.2, 1, 5.2), origin * CFrame.new(18, 25.5, 50), PALETTE.chimney, nil, factory)
+	-- Chimney lives on the right roof edge, clear of the keyboard deck
+	-- (deck spans x -21..21) so the TierOrnament rings never clip it.
+	part("Chimney", Vector3.new(4, 20, 4), origin * CFrame.new(25, 15, 52), PALETTE.chimney, nil, factory)
+	part("ChimneyCap", Vector3.new(5.2, 1, 5.2), origin * CFrame.new(25, 25.5, 52), PALETTE.chimney, nil, factory)
 
-	-- Warm windows on the side walls.
-	local windowL = part("FactoryWindow", Vector3.new(2.4, 4, 4), origin * CFrame.new(-25, 9, 40), PALETTE.window, Enum.Material.Neon, factory)
-	windowL.CanCollide = false
-	local windowR = part("FactoryWindow", Vector3.new(2.4, 4, 4), origin * CFrame.new(25, 9, 40), PALETTE.window, Enum.Material.Neon, factory)
-	windowR.CanCollide = false
+	-- ===== THE ROOF IS A GIANT KEYBOARD =====
+	-- A huge tilted keyboard deck crowns the building so the factory reads as
+	-- a keyboard factory from anywhere on the map. Climbable on purpose.
+	local deckCF = origin * CFrame.new(0, 18.2, 44) * CFrame.Angles(math.rad(-8), 0, 0)
+	part("RoofKeyboardDeck", Vector3.new(42, 2, 19), deckCF, Color3.fromRGB(64, 68, 82), factory)
+	local roofKeycapColors = {
+		Color3.fromRGB(255, 196, 116),
+		Color3.fromRGB(150, 206, 255),
+		Color3.fromRGB(255, 158, 196),
+		Color3.fromRGB(164, 226, 154),
+		Color3.fromRGB(236, 232, 224),
+	}
+	local thock = { "T", "H", "O", "C", "K" }
+	for row = 1, 3 do
+		for col = 1, 7 do
+			local cap = part(
+				"RoofKeycap",
+				Vector3.new(4.6, 1.8, 4.2),
+				deckCF * CFrame.new(-18 + (col - 1) * 6, 1.9, -5.6 + (row - 1) * 5),
+				roofKeycapColors[(row * 7 + col) % #roofKeycapColors + 1],
+				nil,
+				factory
+			)
+			-- The middle five caps of the front row spell THOCK.
+			if row == 3 and col >= 2 and col <= 6 then
+				local gui = Instance.new("SurfaceGui")
+				gui.Face = Enum.NormalId.Top
+				gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+				gui.PixelsPerStud = 30
+				gui.LightInfluence = 0
+				local letter = Instance.new("TextLabel")
+				letter.BackgroundTransparency = 1
+				letter.Size = UDim2.fromScale(1, 1)
+				letter.Font = Enum.Font.FredokaOne
+				letter.Text = thock[col - 1]
+				letter.TextScaled = true
+				letter.TextColor3 = PALETTE.signText
+				letter.Parent = gui
+				gui.Parent = cap
+			end
+		end
+	end
+	-- Giant spacebar under the letter rows.
+	part("RoofSpacebar", Vector3.new(28, 1.8, 4.2), deckCF * CFrame.new(0, 1.9, 8.2), Color3.fromRGB(236, 232, 224), factory)
 
-	-- The machine block visible through the mouth (belts emerge under it).
+	-- ===== Giant ENTER key marks the conveyor mouth =====
+	local enterKey = part("EnterKey", Vector3.new(12, 5, 2.6), origin * CFrame.new(0, 13.4, 31.6), Color3.fromRGB(150, 206, 255), factory)
+	local enterGui = Instance.new("SurfaceGui")
+	enterGui.Face = Enum.NormalId.Front
+	enterGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	enterGui.PixelsPerStud = 25
+	enterGui.LightInfluence = 0
+	local enterLabel = Instance.new("TextLabel")
+	enterLabel.BackgroundTransparency = 1
+	enterLabel.Size = UDim2.fromScale(1, 1)
+	enterLabel.Font = Enum.Font.FredokaOne
+	enterLabel.Text = "ENTER ⏎"
+	enterLabel.TextScaled = true
+	enterLabel.TextColor3 = Color3.fromRGB(38, 52, 72)
+	enterLabel.Parent = enterGui
+	enterGui.Parent = enterKey
+
+	-- Keycap-framed windows on the side walls (warm neon behind a cap frame).
+	for _, side in { -1, 1 } do
+		part("WindowFrame", Vector3.new(2.6, 5.2, 5.2), origin * CFrame.new(side * 25, 9, 40), Color3.fromRGB(236, 232, 224), factory)
+		local window = part("FactoryWindow", Vector3.new(2.8, 4, 4), origin * CFrame.new(side * 25, 9, 40), PALETTE.window, Enum.Material.Neon, factory)
+		window.CanCollide = false
+	end
+
+	-- The machine block visible through the mouth (belts emerge under it) —
+	-- styled as a key-switch: housing + glowing stem the belts slide out of.
 	part("Machine", Vector3.new(34, 6, 10), origin * CFrame.new(0, 4, 40), PALETTE.machine, nil, factory)
+	local stem = part("MachineStem", Vector3.new(30, 1.2, 8), origin * CFrame.new(0, 7.6, 40), Color3.fromRGB(255, 196, 116), Enum.Material.Neon, factory)
+	stem.CanCollide = false
 
 	factory.Parent = plot
 end
