@@ -29,7 +29,7 @@ local Events = require(Shared.Config.Events)
 local DataService = require(script.Parent.DataService)
 local InventoryService = require(script.Parent.InventoryService)
 local PlotService = require(script.Parent.PlotService)
-local KeyboardModel = require(script.Parent.Parent.World.KeyboardModel)
+local KeyboardModel = require(Shared.World.KeyboardModel)
 
 local ProductionService = {}
 

@@ -284,6 +284,92 @@ Notify owner, update sign text via PlotBuilder helper (sign shows
 - EffectsController: hue-cycles parts with attribute "Rainbow"; flickers
   models with attribute "Mutation" == "glitched".
 
+---
+
+# Phase 3 — Restock shop, spectacle, gifting, pity, ceremony (research-driven)
+
+Shared contracts (DONE): Remotes `GlobalRoll`/`GiftRequest`/`SellReport`/
+`BuyRestockItem`/`RestockSync` (payloads in Remotes.luau header), `Types.Profile.pity`,
+`GameConfig.Pity/FriendBonus*/Restock`, `Config/RestockShop`,
+**KeyboardModel moved to `src/shared/World/`** (client ViewportFrames can build it).
+
+**RestockShopService** (NEW) — stall stock synced to wall clock:
+`slotSeed = math.floor(os.time() / Restock.IntervalSeconds)`; roll Slots offers
+by weight (seeded Random.new(slotSeed) so all servers stock identically),
+track stockLeft per slot per cycle. Fire `RestockSync` to all on cycle change
+(1s loop) + to joining players. `BuyRestockItem(slotIndex)`: validate slot,
+stockLeft > 0, cost = offer.cost * profile.upgrades.factoryTier, SpendMoney,
+apply effect: guaranteedRoll → roll rarity clamped ≥ tierFloor (uniform pick in
+allowed tiers weighted by base odds renormalized), AddKeyboard with normal
+mutation roll; luckSurge → profile.boosts["restock_luck"] = now + duration
+(extend RollLogic.GetEffectiveLuck: a boosts key "restock_luck" with a future
+expiry adds the luckBonus of the RestockShop luck_surge offer — one small
+config lookup, keep it data-driven); mutationCharm → profile.boosts["mutation_charm"] =
+now + 3600 AND in-memory charm counter {mult, rollsLeft} consumed by
+ProductionService (expose `RestockShopService.ConsumeCharm(player): number?`
+returning the mult while rolls remain); instantCash → AddMoney(cost * cashMult).
+Rare offers (weight ≤ 3) appearing → Notify all ("flex", "🎁 LEGENDARY CRATE
+in stock at the hub — 1 left!"). Stall world geometry: hub "CrateStall"
+(HubBuilder addition) with SurfaceGui countdown "Restock in m:ss" (client
+EffectsController or a small stall script — put countdown text updates in
+RestockShopService via the List label pattern).
+
+**Pity** — ProductionService: after each roll, if rolled tier >= Pity.TargetTier
+then profile.pity = 0 else profile.pity += 1 (MarkDirty; no Sync per roll —
+piggyback on AddKeyboard's Sync). Pass pity to RollLogic.GetOdds via new
+optional 4th arg: `GetOdds(factoryTier, luck, pityCount?)` — when
+pityCount > SoftStart, move `min((pityCount-SoftStart)*RampPerRoll, 1)` of the
+below-TargetTier probability mass proportionally onto tiers >= TargetTier
+(respecting maxRarity ceiling: if ceiling < TargetTier, pity is inert);
+at pityCount >= HardGuarantee force tier >= min(TargetTier, maxRarity).
+RollKeyboard gains the same optional arg. Odds panel shows the Thock Meter
+(pity/HardGuarantee) — disclosed per Roblox paid-random policy.
+
+**Spectacle** — InventoryService: for tier >= GlobalFlexMinTier OR mutation
+valueMult >= 12, ALSO fire `GlobalRoll` to all clients with
+{ playerName, keyboardId, mutation, rarityTier, plotIndex (plot attribute),
+oddsDenominator = round(1 / (tierOdd * (mutationChance or 1))) }.
+EffectsController: on GlobalRoll, render the sky beam + burst at that plot
+(find plot by PlotIndex attribute) for EVERYONE; tier 11+ adds hub fireworks
+(neon parts launched up + Emit burst at apex). Chat announce via
+TextChatService:DisplaySystemMessage (RichText, rarity color, odds number)
+in RaceController? No — new thin client controller NOT needed: UIController
+handles the chat message + a marquee toast.
+
+**Gifting + friend bonus** — GiftService (NEW): `GiftRequest(targetUserId, uid)`:
+rate limit 1/2s; target = Players:GetPlayerByUserId, online + loaded profile +
+inventory room; uid owned by sender, not equipped, not displayed; remove from
+sender (InventoryService.RemoveKeyboards), append same instance (keep uid &
+mutation) to target profile + collection bump + KeyboardCollected(source="gift")
+to target; Notify both + server flex for tier >= 9 gifts. EconomyService:
+friend bonus — cache `player:IsFriendsWith(other.UserId)` pairs (pcall, on
+join vs each online player, both directions, invalidate on leave); sell total
+*= 1 + min(FriendBonusPerFriend * friendsInServer, FriendBonusCap); include
+the bonus amount in SellReport. EconomyService fires `SellReport` to the
+seller after every successful sell (count, total, bestId, bestValue,
+mutationBonus = extra earned from mutations vs base).
+
+**Ceremony overhaul** (client) — UIController showCelebration: slot-cycle
+anticipation (decelerating name wheel: task.wait(0.05 * 1.18^i), names in
+rarity colors), duration by tier {5=0.9, 9=2.2, 11=4} (lookup w/ fallback),
+tier 9+ freeze-then-flash tell (UIStroke pulse), 3D keyboard ViewportFrame
+(KeyboardModel.Build client-side from Shared.World, WorldModel, slow spin via
+RunService.RenderStepped, rarity Ambient), "NEW!" badge for first-time
+collection entries + "23/36" ticker, tap/keypress skips to reveal, queue
+collapse (>2 queued → highest-tier full ceremony + one summary toast).
+SoundController: slot-tick per swap (PlaybackSpeed 0.8 * 2^(i/12)), reveal
+arpeggio scaled by tier (k=1..min(tier,8), 2^((k*3)/12), 0.07s stagger),
+then PlayKeyboard(id, nil, mutation) 0.4s later. Sell ceremony: on SellReport,
+count-up cash ticks with rising pitch + floating "+$X" at sell zone +
+separate gold line for mutationBonus.
+
+### Phase-3 ownership
+1. restock: Config already done; RestockShopService (NEW), HubBuilder edit (CrateStall), RollLogic edit (GetOdds/RollKeyboard pity arg + GetEffectiveLuck restock_luck key)
+2. social-server: GiftService (NEW), InventoryService edit (GlobalRoll), EconomyService edit (friend bonus + SellReport), ProductionService edit (pity counter + charm consume)
+3. client-ceremony: UIController edits (ceremony, sell ceremony, gift action in inventory overlay, Thock Meter in odds panel, restock stall UI panel via RestockSync + chat announce for GlobalRoll), SoundController edits
+4. client-effects: EffectsController edits (GlobalRoll beams/fireworks for all)
+5. init.server.luau: RestockShopService + GiftService (integration/main loop)
+
 ### Phase-2 file ownership (parallel build)
 
 1. mutations-core: ProductionService, OfflineService, InventoryService edits (+KeyboardCollected payload), SoundController edits

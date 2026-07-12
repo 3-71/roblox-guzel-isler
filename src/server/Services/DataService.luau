@@ -70,6 +70,7 @@ local function defaultProfile(): Types.Profile
 		likesReceived = 0,
 		passes = {},
 		boosts = {},
+		pity = 0,
 	}
 end
 

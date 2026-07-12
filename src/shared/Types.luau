@@ -39,6 +39,8 @@ export type Profile = {
 	passes: { [string]: boolean },
 	-- dev-product boost key -> unix expiry time
 	boosts: { [string]: number },
+	-- rolls since the last Epic+ (pity system; see GameConfig.Pity)
+	pity: number,
 }
 
 -- Payload of the DataSync remote: the full profile snapshot the client renders from.

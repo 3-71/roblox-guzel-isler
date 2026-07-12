@@ -32,6 +32,12 @@ local REMOTE_NAMES = {
 	"RebirthRequest", -- client -> server: perform rebirth (validated server-side)
 	"ClaimIndexReward", -- client -> server: rewardId string
 	"RaceState", -- server -> client: { phase, endsAt, scores? } typing-race updates
+	-- phase 3
+	"GlobalRoll", -- server -> ALL clients: { playerName, keyboardId, mutation?, rarityTier, plotIndex, oddsDenominator } big-roll spectacle
+	"GiftRequest", -- client -> server: (targetUserId: number, uid: string) gift a keyboard to an online player
+	"SellReport", -- server -> client: { count, total, bestId, bestValue, mutationBonus } for the sell ceremony
+	"BuyRestockItem", -- client -> server: slotIndex number, buy from the hub restock stall
+	"RestockSync", -- server -> ALL clients: { restockAt, slots = { { offerId, stockLeft, price } } }
 }
 
 local Remotes = {}

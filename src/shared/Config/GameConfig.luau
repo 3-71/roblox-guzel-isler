@@ -76,6 +76,24 @@ local GameConfig = {
 	-- ===== Leaderboards =====
 	LeaderboardRefreshSeconds = 60,
 	LeaderboardSize = 25,
+
+	-- ===== Pity (bad-luck protection; disclosed in the odds panel) =====
+	Pity = {
+		TargetTier = 7, -- an Epic+ ("custom" tier) roll resets the counter
+		SoftStart = 50, -- rolls without TargetTier+ before odds start ramping
+		RampPerRoll = 0.02, -- extra share moved to TargetTier+ per roll past SoftStart
+		HardGuarantee = 80, -- roll number at which TargetTier+ is guaranteed
+	},
+
+	-- ===== Friends-in-server bonus =====
+	FriendBonusPerFriend = 0.10, -- +10% sell value per friend in the server
+	FriendBonusCap = 0.40,
+
+	-- ===== Hub restock stall (see Config/RestockShop) =====
+	Restock = {
+		IntervalSeconds = 300, -- wall-clock aligned: restocks at :00/:05/:10...
+		Slots = 3,
+	},
 }
 
 return GameConfig
