@@ -18,6 +18,7 @@ local Shared = ReplicatedStorage.Shared
 local Types = require(Shared.Types)
 local GameConfig = require(Shared.Config.GameConfig)
 local Pads = require(Shared.Config.Pads)
+local Remotes = require(Shared.Remotes)
 
 local DataService = require(script.Parent.DataService)
 local PadService = require(script.Parent.PadService)
@@ -106,8 +107,10 @@ local function setupPlot(player: Player, profile: Types.Profile)
 
 	local index = claimLowestFreeIndex()
 	if index == nil then
-		-- PlotCount == server size, so this only means a config mismatch.
+		-- Over-cap player (config drift or teleport burst): they recover when
+		-- a plot frees up — teardownPlot retries waiting players.
 		warn(`[PlotService] No free plot slot for {player.Name}`)
+		Remotes.Notify:FireClient(player, "info", "All plots are full — you'll get one as soon as a spot opens!")
 		return
 	end
 
@@ -195,6 +198,19 @@ local function teardownPlot(player: Player)
 		indexUsed[index] = nil
 	end
 	pcall(PlotBuilder.Destroy, plot)
+
+	-- Self-heal: hand the freed slot to a loaded player still waiting for one
+	-- (a waiter is exactly a loaded profile with no plot). setupPlot's own
+	-- guards make a double invocation harmless.
+	for _, other in Players:GetPlayers() do
+		if other ~= player and playerToPlot[other] == nil then
+			local profile = DataService.GetProfile(other)
+			if profile ~= nil then
+				task.spawn(setupPlot, other, profile)
+				break
+			end
+		end
+	end
 end
 
 -- ===== Public API =====

@@ -27,6 +27,11 @@
         "StreamingEnabled": false
       }
     },
+    "Players": {
+      "$properties": {
+        "MaxPlayers": 8
+      }
+    },
     "Lighting": {
       "$properties": {
         "Brightness": 3,

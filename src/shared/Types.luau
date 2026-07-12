@@ -48,6 +48,8 @@ export type Profile = {
 	-- UTC day number (os.time() // 86400)
 	streakDays: number,
 	streakLastDay: number,
+	-- monotonic write counter (DataService staleness guard)
+	saveCount: number,
 }
 
 -- Payload of the DataSync remote: the full profile snapshot the client renders from.

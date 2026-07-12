@@ -93,7 +93,9 @@ end
 -- Writes both of one player's scores. Yields (SetAsync) — call from a task.
 local function writeScores(player: Player)
 	local profile = DataService.GetProfile(player)
-	if profile == nil then
+	-- Never let an outage-fallback (doNotSave) session's fresh zeros
+	-- overwrite a player's real cross-server leaderboard scores.
+	if profile == nil or not DataService.IsSaveable(player) then
 		return
 	end
 	local key = tostring(player.UserId)

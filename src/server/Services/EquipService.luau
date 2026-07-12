@@ -20,8 +20,9 @@ local EquipService = {}
 
 local heldModels: { [Player]: Model } = {}
 local characterConns: { [Player]: RBXScriptConnection } = {}
--- token bucket per player for TypeKeyRequest
+-- token buckets per player for TypeKeyRequest / EquipRequest
 local typeTokens: { [Player]: { tokens: number, last: number } } = {}
+local equipTokens: { [Player]: { tokens: number, last: number } } = {}
 -- subscribers to accepted typing keypresses (see OnTypeAccepted)
 local typeAcceptedCallbacks: { (Player) -> () } = {}
 
@@ -97,9 +98,38 @@ local function attachHeld(player: Player)
 	heldModels[player] = model
 end
 
+local function takeEquipToken(player: Player): boolean
+	local bucket = equipTokens[player]
+	local now = os.clock()
+	if not bucket then
+		bucket = { tokens = 4, last = now }
+		equipTokens[player] = bucket
+	end
+	bucket.tokens = math.min(4, bucket.tokens + (now - bucket.last) * GameConfig.EquipRateLimitPerSecond)
+	bucket.last = now
+	if bucket.tokens < 1 then
+		return false
+	end
+	bucket.tokens -= 1
+	return true
+end
+
 local function onEquipRequest(player: Player, uid: unknown)
+	if not takeEquipToken(player) then
+		return
+	end
 	local profile = DataService.GetProfile(player)
 	if not profile then
+		return
+	end
+
+	-- No-op requests skip model rebuilds and full-profile syncs entirely —
+	-- EXCEPT re-equipping the same uid with no held visual, which repairs a
+	-- failed/missing hand attach.
+	if uid == nil and profile.equippedUid == nil then
+		return
+	end
+	if uid == profile.equippedUid and heldModels[player] ~= nil then
 		return
 	end
 
@@ -227,6 +257,7 @@ function EquipService.Start()
 			characterConns[player] = nil
 		end
 		typeTokens[player] = nil
+		equipTokens[player] = nil
 	end)
 end
 

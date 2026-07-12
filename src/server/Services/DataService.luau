@@ -30,7 +30,10 @@ type Session = {
 	-- Set when the load ultimately failed: the player gets a fresh profile
 	-- for this session, but we must never save it over their real data.
 	doNotSave: boolean,
-	saving: boolean,
+	-- The stored profile's saveCount as of our load (advanced by our own
+	-- successful writes). If the stored value ever exceeds it, another server
+	-- saved after we loaded and our copy is stale (see saveSession).
+	lastKnownSaveCount: number,
 }
 
 local DataService = {}
@@ -74,6 +77,7 @@ local function defaultProfile(): Types.Profile
 		grantedReceipts = {},
 		streakDays = 0,
 		streakLastDay = 0,
+		saveCount = 0,
 	}
 end
 
@@ -124,31 +128,53 @@ local function loadRaw(key: string): (boolean, any)
 	return false, nil
 end
 
+-- One save lock per UserId (not per Session): serializes autosave vs
+-- leave-save vs shutdown flush AND a rejoined session's saves/loads against
+-- the previous session's in-flight leave-save.
+local savingUserIds: { [number]: boolean } = {}
+
 local function saveSession(player: Player, session: Session, attempts: number): boolean
 	local store = dataStore
 	if store == nil or session.doNotSave then
 		return false
 	end
-	-- Serialize saves per player so two UpdateAsync calls (autosave vs
-	-- leave-save vs shutdown flush) never race on the same key.
-	while session.saving do
+	local userId = player.UserId
+	while savingUserIds[userId] do
 		task.wait(0.1)
 	end
-	session.saving = true
+	savingUserIds[userId] = true
 	activeSaves += 1
+
+	-- Clear dirty up front (under the lock): a MarkDirty landing during the
+	-- UpdateAsync yield then survives as dirty=true for the next autosave.
+	session.dirty = false
 
 	session.profile.lastSeen = os.time()
 	local key = keyFor(player)
 	local backoff = 1
 	local saved = false
+	local conflicted = false
 	for attempt = 1, attempts do
 		local ok, err = pcall(function()
-			store:UpdateAsync(key, function()
+			store:UpdateAsync(key, function(old: any)
+				-- Staleness guard: if a NEWER save exists (another server wrote
+				-- after we loaded), abort rather than roll the player back.
+				if typeof(old) == "table"
+					and typeof(old.saveCount) == "number"
+					and old.saveCount > session.lastKnownSaveCount
+				then
+					conflicted = true
+					return nil -- keep the newer save untouched
+				end
+				local base = if typeof(old) == "table" and typeof(old.saveCount) == "number"
+					then old.saveCount
+					else session.lastKnownSaveCount
+				session.profile.saveCount = base + 1
 				return session.profile
 			end)
 		end)
 		if ok then
-			saved = true
+			saved = not conflicted
 			break
 		end
 		warn(`[DataService] Save attempt {attempt}/{attempts} failed for {key}: {err}`)
@@ -157,13 +183,28 @@ local function saveSession(player: Player, session: Session, attempts: number): 
 			backoff *= 2
 		end
 	end
-	if saved then
-		session.dirty = false
+
+	if conflicted then
+		-- Our whole session is stale; stop writing over the newer data.
+		warn(`[DataService] Stale session for {key}: a newer save exists elsewhere; disabling saves this session`)
+		session.doNotSave = true
+	elseif saved then
+		session.lastKnownSaveCount = session.profile.saveCount
+	else
+		session.dirty = true -- failed save: re-arm the autosave
 	end
 
-	session.saving = false
+	savingUserIds[userId] = nil
 	activeSaves -= 1
 	return saved
+end
+
+-- Whether this player's session may be persisted (false for outage/stale
+-- fallback sessions). External writers (leaderboards) must check this so a
+-- throwaway profile never overwrites real cross-server data.
+function DataService.IsSaveable(player: Player): boolean
+	local session = sessions[player]
+	return session ~= nil and not session.doNotSave
 end
 
 -- Synchronous best-effort save for callers that must not report success
@@ -186,6 +227,10 @@ function DataService.ForceSave(player: Player): boolean
 end
 
 local function loadPlayer(player: Player)
+	-- A rejoin must observe the previous session's completed leave-save.
+	while savingUserIds[player.UserId] do
+		task.wait(0.1)
+	end
 	local ok, raw = loadRaw(keyFor(player))
 
 	local profile: Types.Profile
@@ -215,7 +260,7 @@ local function loadPlayer(player: Player)
 		profile = profile,
 		dirty = true, -- persist firstJoin (and offline output) on first autosave
 		doNotSave = doNotSave,
-		saving = false,
+		lastKnownSaveCount = profile.saveCount,
 	}
 	sessions[player] = session
 

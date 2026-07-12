@@ -118,7 +118,30 @@ function ShowcaseService.RenderAll(player: Player)
 	end
 end
 
+-- token bucket per player for DisplayRequest (model builds + full syncs are
+-- too heavy to run at remote-spam speed)
+local displayTokens: { [Player]: { tokens: number, last: number } } = {}
+
+local function takeDisplayToken(player: Player): boolean
+	local bucket = displayTokens[player]
+	local now = os.clock()
+	if not bucket then
+		bucket = { tokens = 3, last = now }
+		displayTokens[player] = bucket
+	end
+	bucket.tokens = math.min(3, bucket.tokens + (now - bucket.last) * GameConfig.DisplayRateLimitPerSecond)
+	bucket.last = now
+	if bucket.tokens < 1 then
+		return false
+	end
+	bucket.tokens -= 1
+	return true
+end
+
 local function onDisplayRequest(player: Player, standIndex: unknown, uid: unknown)
+	if not takeDisplayToken(player) then
+		return
+	end
 	local profile = DataService.GetProfile(player)
 	if not profile then
 		return
@@ -193,6 +216,7 @@ function ShowcaseService.Start()
 	Players.PlayerRemoving:Connect(function(player)
 		-- models live under the plot (destroyed with it); just drop references
 		displayedModels[player] = nil
+		displayTokens[player] = nil
 	end)
 end
 

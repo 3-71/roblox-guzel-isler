@@ -45,6 +45,8 @@ local GameConfig = {
 	-- ===== Typing / sounds =====
 	TypeRateLimitPerSecond = 10, -- server-side cap on TypeKeyRequest
 	TypeSoundRange = 60, -- studs other players can hear your typing from
+	EquipRateLimitPerSecond = 4, -- server-side cap on EquipRequest
+	DisplayRateLimitPerSecond = 3, -- server-side cap on DisplayRequest
 
 	-- ===== Data =====
 	DataStoreName = "GrowAKeyboard_v1",
