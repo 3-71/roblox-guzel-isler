@@ -540,9 +540,11 @@ local function buildSign(plot: Model, origin: CFrame, player: Player)
 	local sign = Instance.new("Model")
 	sign.Name = "Sign"
 
-	part("SignPost", Vector3.new(0.8, 6, 0.8), origin * CFrame.new(-5.6, 3, -56), PALETTE.wood, Enum.Material.WoodPlanks, sign)
-	part("SignPost", Vector3.new(0.8, 6, 0.8), origin * CFrame.new(5.6, 3, -56), PALETTE.wood, Enum.Material.WoodPlanks, sign)
-	local board = part("SignBoard", Vector3.new(13.5, 3.4, 0.6), origin * CFrame.new(0, 6.2, -56), PALETTE.signBoard, Enum.Material.WoodPlanks, sign)
+	-- Left of the gate gap (|x| < 10) and just OUTSIDE the front fence line
+	-- (z = -FENCE), so the entrance stays completely clear to walk through.
+	part("SignPost", Vector3.new(0.8, 6, 0.8), origin * CFrame.new(-25.6, 3, -60), PALETTE.wood, Enum.Material.WoodPlanks, sign)
+	part("SignPost", Vector3.new(0.8, 6, 0.8), origin * CFrame.new(-14.4, 3, -60), PALETTE.wood, Enum.Material.WoodPlanks, sign)
+	local board = part("SignBoard", Vector3.new(13.5, 3.4, 0.6), origin * CFrame.new(-20, 6.2, -60), PALETTE.signBoard, Enum.Material.WoodPlanks, sign)
 
 	-- Front face (-Z) looks toward the hub, so visitors read it walking in.
 	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do

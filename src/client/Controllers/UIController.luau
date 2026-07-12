@@ -452,8 +452,9 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 			Remotes.DisplayRequest:FireServer(standIndex, nil)
 			closeActionOverlay()
 		end)
-	elseif p.upgrades.displays > 0 and not equipped then
-		-- stand picker row
+	elseif (math.min(p.upgrades.displays + (if p.passes.extraStands then 2 else 0), GameConfig.MaxDisplayStands)) > 0 and not equipped then
+		-- stand picker row (mirrors ShowcaseService's extraStands-pass math)
+		local unlockedStands = math.min(p.upgrades.displays + (if p.passes.extraStands then 2 else 0), GameConfig.MaxDisplayStands)
 		local row = mkFrame(overlay, {
 			Size = UDim2.new(1, 0, 0, 40),
 			BackgroundTransparency = 1,
@@ -467,7 +468,7 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 		rowLayout.Parent = row
 		mkText(row, { Size = UDim2.fromOffset(74, 40), Text = "Display:", TextColor3 = TEXT_DIM })
 		for i = 1, GameConfig.MaxDisplayStands do
-			local unlocked = p.upgrades.displays >= i
+			local unlocked = unlockedStands >= i
 			local b = mkButton(row, {
 				Size = UDim2.fromOffset(36, 36),
 				Text = tostring(i),
@@ -735,6 +736,7 @@ local function renderCollection()
 	end
 	local header = collContent:FindFirstChild("Header") :: TextLabel
 	header.Text = `Collection: {discovered} / {#Keyboards}`
+	renderIndexStrip(p, discovered)
 
 	local y = 0
 	for tier = 1, #Rarities do
@@ -804,10 +806,25 @@ local function buildCollectionPanel()
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})
 	header.Parent = content
+
+	-- Index-reward claim chips live between the header and the grid.
+	local strip = mkFrame(content, {
+		Name = "IndexStrip",
+		Position = UDim2.fromOffset(0, 26),
+		Size = UDim2.new(1, 0, 0, 40),
+		BackgroundTransparency = 1,
+	})
+	local stripLayout = Instance.new("UIListLayout")
+	stripLayout.FillDirection = Enum.FillDirection.Horizontal
+	stripLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	stripLayout.Padding = UDim.new(0, 6)
+	stripLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	stripLayout.Parent = strip
+
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Scroll"
-	scroll.Position = UDim2.fromOffset(0, 28)
-	scroll.Size = UDim2.new(1, 0, 1, -32)
+	scroll.Position = UDim2.fromOffset(0, 72)
+	scroll.Size = UDim2.new(1, 0, 1, -76)
 	scroll.BackgroundTransparency = 1
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 6
@@ -1371,7 +1388,7 @@ local function watchSellZone()
 			end
 			local sellZone = if myPlot then myPlot:FindFirstChild("SellZone") else nil
 			if sellZone and sellZone:IsA("BasePart") then
-				sellZone.Touched:Connect(function(hit)
+				local connection = sellZone.Touched:Connect(function(hit)
 					local character = localPlayer.Character
 					if character and hit:IsDescendantOf(character) and os.clock() - debounce > 1.5 then
 						debounce = os.clock()
@@ -1380,7 +1397,12 @@ local function watchSellZone()
 						end
 					end
 				end)
-				return
+				-- The plot is destroyed and rebuilt on rebirth; when this zone
+				-- dies, loop around and rebind to the new plot's SellZone.
+				while sellZone:IsDescendantOf(game) do
+					task.wait(1)
+				end
+				connection:Disconnect()
 			end
 			task.wait(1)
 		end

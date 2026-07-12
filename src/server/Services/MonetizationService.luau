@@ -165,14 +165,34 @@ local function processReceipt(receiptInfo: any): Enum.ProductPurchaseDecision
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end
 
+	-- A previous session (or a save that landed while the receipt retry was
+	-- pending) may already contain this grant — finalize without re-granting.
+	if table.find(profile.grantedReceipts, purchaseId) ~= nil then
+		processedPurchases[purchaseId] = true
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+
 	local ok, err = pcall(applyProductEffect, buyer, profile, def)
 	if not ok then
 		warn(`[MonetizationService] Failed to grant {def.key} to {buyer.Name}: {err}`)
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
-	processedPurchases[purchaseId] = true
+	-- Persist grant + idempotency marker atomically BEFORE confirming the
+	-- receipt, so a paid grant can never be lost to a crash or a doNotSave
+	-- session. If the save fails, Roblox retries later: grantedReceipts
+	-- either persisted (retry finalizes above) or nothing did (clean re-grant).
+	table.insert(profile.grantedReceipts, purchaseId)
+	while #profile.grantedReceipts > 50 do
+		table.remove(profile.grantedReceipts, 1)
+	end
 	DataService.MarkDirty(buyer)
+	if not DataService.ForceSave(buyer) then
+		warn(`[MonetizationService] Could not persist {def.key} grant for {buyer.Name}; receipt stays pending`)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	processedPurchases[purchaseId] = true
 	DataService.Sync(buyer)
 	Remotes.Notify:FireClient(buyer, "info", `Thanks for buying {def.name}!`)
 	return Enum.ProductPurchaseDecision.PurchaseGranted

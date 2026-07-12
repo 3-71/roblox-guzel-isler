@@ -9,6 +9,13 @@
 -- Luck distribution: the same base weights, but each rarity is boosted
 -- proportionally to (rarity - 1) * luckLevel, pushing mass toward the
 -- high end without ever exceeding the factory's rarity ceiling.
+--
+-- Pity (GameConfig.Pity, disclosed in the odds panel): callers may pass the
+-- player's rolls-since-last-TargetTier+ count as an optional trailing arg to
+-- GetOdds / RollRarity / RollKeyboard. Past SoftStart, probability mass below
+-- TargetTier shifts proportionally onto TargetTier+ (hard guarantee at
+-- HardGuarantee rolls). When the factory's rarity ceiling is below TargetTier
+-- pity is inert. Omitting the argument keeps the pre-pity behavior exactly.
 
 local GameConfig = require(script.Parent.Config.GameConfig)
 local FactoryTiers = require(script.Parent.Config.FactoryTiers)
@@ -48,8 +55,49 @@ local function baseWeights(maxRarity: number): { number }
 	return weights
 end
 
--- Returns normalized probabilities for rarity tiers 1..12.
-function RollLogic.GetOdds(factoryTier: number, luckLevel: number): { number }
+-- Applies the pity ramp to a normalized odds table IN PLACE (see header).
+-- Total probability is preserved: below-TargetTier mass shrinks by `shift`
+-- and the removed mass lands on TargetTier+ proportionally to current odds.
+local function applyPity(odds: { number }, maxRarity: number, pityCount: number)
+	local pity = GameConfig.Pity
+	if maxRarity < pity.TargetTier then
+		return -- ceiling below the pity target: pity is inert (contract)
+	end
+
+	local shift = math.clamp((pityCount - pity.SoftStart) * pity.RampPerRoll, 0, 1)
+	if pityCount >= pity.HardGuarantee then
+		shift = 1 -- hard guarantee: force tier >= TargetTier
+	end
+	if shift <= 0 then
+		return
+	end
+
+	local below = 0
+	local above = 0
+	for tier, p in odds do
+		if tier < pity.TargetTier then
+			below += p
+		else
+			above += p
+		end
+	end
+	if below <= 0 or above <= 0 then
+		return -- nothing to move / nowhere to move it
+	end
+
+	local moved = below * shift
+	for tier, p in odds do
+		if tier < pity.TargetTier then
+			odds[tier] = p * (1 - shift)
+		else
+			odds[tier] = p + moved * p / above
+		end
+	end
+end
+
+-- Returns normalized probabilities for rarity tiers 1..12. Optional pityCount
+-- (rolls since the last TargetTier+ hit) engages bad-luck protection.
+function RollLogic.GetOdds(factoryTier: number, luckLevel: number, pityCount: number?): { number }
 	factoryTier = math.clamp(factoryTier, 1, #FactoryTiers)
 	luckLevel = math.max(luckLevel, 0)
 
@@ -67,27 +115,37 @@ function RollLogic.GetOdds(factoryTier: number, luckLevel: number): { number }
 		odds[tier] = GameConfig.FactoryWeightShare * factoryDist[tier]
 			+ GameConfig.LuckWeightShare * luckDist[tier]
 	end
+
+	if pityCount ~= nil then
+		applyPity(odds, maxRarity, pityCount)
+	end
 	return odds
 end
 
 -- Rolls a rarity tier (1..12).
-function RollLogic.RollRarity(factoryTier: number, luckLevel: number, rng: Random): number
-	local odds = RollLogic.GetOdds(factoryTier, luckLevel)
+function RollLogic.RollRarity(factoryTier: number, luckLevel: number, rng: Random, pityCount: number?): number
+	local odds = RollLogic.GetOdds(factoryTier, luckLevel, pityCount)
 	local roll = rng:NextNumber()
 	local cumulative = 0
+	local lastPositive = 1
 	for tier, p in odds do
-		cumulative += p
-		if roll <= cumulative then
-			return tier
+		if p > 0 then
+			lastPositive = tier
+			cumulative += p
+			if roll <= cumulative then
+				return tier
+			end
 		end
 	end
-	return 1
+	-- Float rounding can leave the cumulative a hair under 1; falling back to
+	-- the highest tier with real probability keeps the pity hard guarantee.
+	return lastPositive
 end
 
 -- Rolls a full keyboard: rarity tier first, then uniform pick within tier.
 -- Returns the keyboard's index into Config/Keyboards.
-function RollLogic.RollKeyboard(factoryTier: number, luckLevel: number, rng: Random): number
-	local tier = RollLogic.RollRarity(factoryTier, luckLevel, rng)
+function RollLogic.RollKeyboard(factoryTier: number, luckLevel: number, rng: Random, pityCount: number?): number
+	local tier = RollLogic.RollRarity(factoryTier, luckLevel, rng, pityCount)
 	local candidates = {}
 	for index, def in Keyboards do
 		if def.rarityTier == tier then
@@ -120,6 +178,28 @@ function RollLogic.RollMutation(rng: Random, chanceMult: number): string?
 	return nil
 end
 
+-- The hub stall's Luck Surge bonus (Config/RestockShop "luck_surge" offer),
+-- resolved lazily on first use and cached. Lazy on purpose: RollLogic's
+-- load-time requires stay unchanged for offline harnesses that stub module
+-- resolution, and no roll ever pays the lookup unless the boost is active.
+local restockLuckSurgeBonus: number? = nil
+local function getRestockLuckSurgeBonus(): number
+	local cached = restockLuckSurgeBonus
+	if cached ~= nil then
+		return cached
+	end
+	local bonus = 0
+	local RestockShop = require(script.Parent.Config.RestockShop) :: { any }
+	for _, offer in RestockShop do
+		if offer.kind == "luckSurge" and typeof(offer.luckBonus) == "number" then
+			bonus = offer.luckBonus
+			break
+		end
+	end
+	restockLuckSurgeBonus = bonus
+	return bonus
+end
+
 -- The single source of truth for a player's total luck level. `profile` is a
 -- Types.Profile (typed loosely to avoid a require cycle with consumers).
 -- eventLuckBonus comes from the active server event (0 when none).
@@ -149,6 +229,9 @@ function RollLogic.GetEffectiveLuck(profile: any, now: number, eventLuckBonus: n
 							luck += product.serverLuckBonus or 0
 						end
 					end
+				elseif key == "restock_luck" then
+					-- hub stall Luck Surge (see Config/RestockShop)
+					luck += getRestockLuckSurgeBonus()
 				else
 					for _, product in Products.DevProducts do
 						if product.key == key then

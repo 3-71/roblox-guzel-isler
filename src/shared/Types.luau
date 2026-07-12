@@ -41,6 +41,9 @@ export type Profile = {
 	boosts: { [string]: number },
 	-- rolls since the last Epic+ (pity system; see GameConfig.Pity)
 	pity: number,
+	-- newest ~50 finalized dev-product PurchaseIds (receipt idempotency across
+	-- sessions; see MonetizationService.processReceipt)
+	grantedReceipts: { string },
 }
 
 -- Payload of the DataSync remote: the full profile snapshot the client renders from.

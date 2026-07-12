@@ -61,7 +61,7 @@ local function tryRebirth(player: Player)
 
 	profile.rebirths += 1
 	profile.money = 0
-	EconomyService.AddMoney(player, 0) -- refresh leaderstats display
+	EconomyService.RefreshLeaderstats(player)
 
 	-- Reset progression; keep the showcase (display stands + displayed boards).
 	profile.upgrades.factoryTier = 1

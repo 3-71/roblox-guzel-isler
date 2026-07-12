@@ -4,7 +4,8 @@
 -- Contract (ARCHITECTURE.md):
 --   AddKeyboard(player, keyboardId, source) -> Types.KeyboardInstance?
 --     nil at InventoryCap / unknown id / no profile. Fires KeyboardCollected
---     to the owner and a server-wide "flex" Notify for high tiers.
+--     to the owner and, for high tiers / huge mutations, a server-wide "flex"
+--     Notify plus the GlobalRoll spectacle payload to ALL clients (Phase 3).
 --   RemoveKeyboards(player, uids) -> { Types.KeyboardInstance }
 --     removes & returns matches; unequips/undisplays any removed uid.
 --   GetKeyboard(player, uid) -> Types.KeyboardInstance?
@@ -18,11 +19,53 @@ local Shared = ReplicatedStorage.Shared
 local Types = require(Shared.Types)
 local Remotes = require(Shared.Remotes)
 local Catalog = require(Shared.Catalog)
+local RollLogic = require(Shared.RollLogic)
 local GameConfig = require(Shared.Config.GameConfig)
+local Events = require(Shared.Config.Events)
 
 local DataService = require(script.Parent.DataService)
 
 local InventoryService = {}
+
+-- The active event's luck bonus, read from the Workspace attributes published
+-- by EventService (0 when none/expired). Every luck read goes through
+-- RollLogic.GetEffectiveLuck (contract), and this is its event input.
+local function activeEventLuckBonus(): number
+	local id = workspace:GetAttribute("ActiveEventId")
+	local expiry = workspace:GetAttribute("ActiveEventUntil")
+	if typeof(id) ~= "string" or id == "" then
+		return 0
+	end
+	if typeof(expiry) ~= "number" or expiry <= os.time() then
+		return 0
+	end
+	for _, event in Events do
+		if event.id == id then
+			return event.luckBonus
+		end
+	end
+	return 0
+end
+
+-- The player's plot index for the GlobalRoll payload, read straight off the
+-- Workspace.Plots attributes set by PlotBuilder. Deliberately NOT via a
+-- PlotService require: PlotService -> PadService -> EconomyService ->
+-- InventoryService would be a require cycle. 0 = plot not found (clients
+-- simply skip the plot-anchored effects).
+local function findPlotIndex(player: Player): number
+	local plots = workspace:FindFirstChild("Plots")
+	if plots ~= nil then
+		for _, plot in plots:GetChildren() do
+			if plot:GetAttribute("OwnerUserId") == player.UserId then
+				local index = plot:GetAttribute("PlotIndex")
+				if typeof(index) == "number" then
+					return index
+				end
+			end
+		end
+	end
+	return 0
+end
 
 function InventoryService.AddKeyboard(player: Player, keyboardId: string, source: string, mutation: string?): Types.KeyboardInstance?
 	local profile = DataService.GetProfile(player)
@@ -70,6 +113,23 @@ function InventoryService.AddKeyboard(player: Player, keyboardId: string, source
 			local who = if profile.passes ~= nil and profile.passes.vip then "👑 " .. player.Name else player.Name
 			local what = if mutationDef then mutationDef.name .. " " .. rarity.name else rarity.name
 			Remotes.Notify:FireAllClients("flex", who .. " just rolled a " .. what .. " " .. def.name .. "!")
+
+			-- Phase-3 spectacle: the same rolls also fire GlobalRoll so EVERY
+			-- client renders the sky beam / fireworks at the roller's plot and
+			-- shows the "1 in N" odds line.
+			local effectiveLuck = RollLogic.GetEffectiveLuck(profile, os.time(), activeEventLuckBonus())
+			local odds = RollLogic.GetOdds(profile.upgrades.factoryTier, effectiveLuck)
+			local tierOdd = odds[def.rarityTier] or 0
+			local mutationChanceShare = if mutationDef ~= nil then mutationDef.chance else 1
+			local oddsDenominator = math.max(1, math.floor(1 / math.max(tierOdd * mutationChanceShare, 1e-9) + 0.5))
+			Remotes.GlobalRoll:FireAllClients({
+				playerName = player.Name,
+				keyboardId = def.id,
+				mutation = instance.mutation,
+				rarityTier = def.rarityTier,
+				plotIndex = findPlotIndex(player),
+				oddsDenominator = oddsDenominator,
+			})
 		end
 	end
 

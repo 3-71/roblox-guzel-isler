@@ -13,6 +13,14 @@
 --     Rate limit 2 requests/sec per player; excess dropped silently.
 --   leaderstats.Money IntValue created on profile load, kept in sync.
 --
+-- Phase 3:
+--   Friends-in-server bonus: sell totals are multiplied by
+--   1 + min(FriendBonusPerFriend * friendsInServer, FriendBonusCap), floored.
+--   Friendships are cached per online pair (pcall IsFriendsWith once per
+--   pair, both directions), invalidated on leave.
+--   SellReport remote fired to the seller after every successful sell:
+--   { count, total, bestId, bestValue, mutationBonus } (sell ceremony data).
+--
 -- Extra helper: Abbreviate(n) -> "1.2K"-style string (pad toasts reuse it).
 
 local Players = game:GetService("Players")
@@ -23,6 +31,7 @@ local Types = require(Shared.Types)
 local Remotes = require(Shared.Remotes)
 local Catalog = require(Shared.Catalog)
 local Rarities = require(Shared.Config.Rarities)
+local GameConfig = require(Shared.Config.GameConfig)
 
 local DataService = require(script.Parent.DataService)
 local InventoryService = require(script.Parent.InventoryService)
@@ -35,6 +44,71 @@ local MAX_UIDS_PER_SELL = 50 -- contract: "uids" mode cap
 
 -- Sliding-window timestamps of recent SellRequests, per player.
 local sellTimestamps: { [Player]: { number } } = {}
+
+-- ===== Friends-in-server bonus =====
+
+-- friendsWith[a][b] = whether a and b are Roblox friends. Symmetric (both
+-- directions cached from ONE IsFriendsWith web call per pair), entries only
+-- ever reference online players (cleaned on leave).
+local friendsWith: { [Player]: { [Player]: boolean } } = {}
+
+-- Number of the player's friends currently in this server.
+local function friendCount(player: Player): number
+	local map = friendsWith[player]
+	if map == nil then
+		return 0
+	end
+	local count = 0
+	for other, isFriend in map do
+		if isFriend and other.Parent ~= nil then
+			count += 1
+		end
+	end
+	return count
+end
+
+-- Resolves one (a, b) pair via IsFriendsWith and caches both directions.
+-- Yields (web call), so it always runs inside task.spawn; a pcall failure
+-- caches "not friends" — the bonus only ever under-counts, never errors.
+local function cachePair(a: Player, b: Player)
+	local mapA = friendsWith[a]
+	if mapA == nil or mapA[b] ~= nil then
+		return -- a left, or this pair was already checked
+	end
+	local ok, result = pcall(function()
+		return a:IsFriendsWith(b.UserId)
+	end)
+	local isFriend = ok and result == true
+	-- Re-fetch: either player may have left during the web call.
+	mapA = friendsWith[a]
+	if mapA ~= nil then
+		mapA[b] = isFriend
+	end
+	local mapB = friendsWith[b]
+	if mapB ~= nil then
+		mapB[a] = isFriend
+	end
+end
+
+-- Ensures `player` has a cache map and every online pair involving them is
+-- (being) resolved. Idempotent: already-cached pairs are skipped, so calling
+-- from both PlayerAdded and OnProfileLoaded is safe.
+local function refreshFriendships(player: Player)
+	if player.Parent == nil then
+		return
+	end
+	if friendsWith[player] == nil then
+		friendsWith[player] = {}
+	end
+	for _, other in Players:GetPlayers() do
+		if other ~= player then
+			if friendsWith[other] == nil then
+				friendsWith[other] = {}
+			end
+			task.spawn(cachePair, player, other)
+		end
+	end
+end
 
 -- ===== Number formatting =====
 
@@ -84,6 +158,15 @@ local function refreshLeaderstats(player: Player, profile: Types.Profile)
 end
 
 -- ===== Money API =====
+
+-- Re-syncs leaderstats.Money from the profile without changing balances
+-- (AddMoney ignores 0, so post-rebirth resets need this explicit path).
+function EconomyService.RefreshLeaderstats(player: Player)
+	local profile = DataService.GetProfile(player)
+	if profile ~= nil then
+		refreshLeaderstats(player, profile)
+	end
+end
 
 function EconomyService.AddMoney(player: Player, amount: number)
 	local profile = DataService.GetProfile(player)
@@ -225,10 +308,37 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 	end
 	local factoryTier = profile.upgrades.factoryTier
 	local total = 0
+	local bestId: string? = nil
+	local bestValue = 0
+	local mutationBonus = 0
 	for _, instance in removed do
-		total += Catalog.GetSellValue(instance.id, factoryTier, instance.mutation, profile.rebirths)
+		local value = Catalog.GetSellValue(instance.id, factoryTier, instance.mutation, profile.rebirths)
+		total += value
+		if bestId == nil or value > bestValue then
+			bestId = instance.id
+			bestValue = value
+		end
+		if instance.mutation ~= nil then
+			-- Extra earned from the mutation vs the same keyboard unmutated.
+			local baseValue = Catalog.GetSellValue(instance.id, factoryTier, nil, profile.rebirths)
+			mutationBonus += value - baseValue
+		end
 	end
+
+	-- Friends-in-server bonus (Phase 3 contract).
+	local bonus = math.min(GameConfig.FriendBonusPerFriend * friendCount(player), GameConfig.FriendBonusCap)
+	total = math.floor(total * (1 + bonus))
+
 	EconomyService.AddMoney(player, total)
+
+	-- Sell ceremony data for the seller's client (Phase 3 contract).
+	Remotes.SellReport:FireClient(player, {
+		count = #removed,
+		total = total,
+		bestId = bestId,
+		bestValue = bestValue,
+		mutationBonus = mutationBonus,
+	})
 
 	local noun = if #removed == 1 then "keyboard" else "keyboards"
 	Remotes.Notify:FireClient(player, "info", `Sold {#removed} {noun} for ${EconomyService.Abbreviate(total)}`)
@@ -243,14 +353,21 @@ end
 function EconomyService.Start()
 	DataService.OnProfileLoaded(function(player, profile)
 		refreshLeaderstats(player, profile)
+		refreshFriendships(player)
 	end)
 
 	Remotes.SellRequest.OnServerEvent:Connect(function(player, mode, payload)
 		onSellRequest(player, mode, payload)
 	end)
 
+	Players.PlayerAdded:Connect(refreshFriendships)
+
 	Players.PlayerRemoving:Connect(function(player)
 		sellTimestamps[player] = nil
+		friendsWith[player] = nil
+		for _, map in friendsWith do
+			map[player] = nil
+		end
 	end)
 end
 

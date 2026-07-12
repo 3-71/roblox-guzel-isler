@@ -65,7 +65,8 @@ local function renderStand(player: Player, profile: Types.Profile, standIndex: n
 		return
 	end
 
-	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.7)
+	local mutationDef = Catalog.GetMutation(instance.mutation)
+	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.7, mutationDef)
 	if not ok or typeof(model) ~= "Instance" then
 		return
 	end

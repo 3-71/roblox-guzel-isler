@@ -57,7 +57,8 @@ local function attachHeld(player: Player)
 		return
 	end
 
-	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.45)
+	local mutationDef = Catalog.GetMutation(instance.mutation)
+	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.45, mutationDef)
 	if not ok or typeof(model) ~= "Instance" then
 		return
 	end

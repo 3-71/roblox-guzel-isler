@@ -71,6 +71,7 @@ local function defaultProfile(): Types.Profile
 		passes = {},
 		boosts = {},
 		pity = 0,
+		grantedReceipts = {},
 	}
 end
 
@@ -161,6 +162,25 @@ local function saveSession(player: Player, session: Session, attempts: number): 
 	session.saving = false
 	activeSaves -= 1
 	return saved
+end
+
+-- Synchronous best-effort save for callers that must not report success
+-- until the profile is on disk (ProcessReceipt). Returns true in the
+-- Studio in-memory fallback (there is nothing to persist there), false for
+-- missing or doNotSave sessions so paid grants are never "confirmed" into
+-- a throwaway profile.
+function DataService.ForceSave(player: Player): boolean
+	local session = sessions[player]
+	if session == nil then
+		return false
+	end
+	if dataStore == nil then
+		return true -- Studio fallback: in-memory profiles, nothing to flush
+	end
+	if session.doNotSave then
+		return false
+	end
+	return saveSession(player, session, SAVE_ATTEMPTS)
 end
 
 local function loadPlayer(player: Player)

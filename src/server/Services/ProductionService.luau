@@ -51,6 +51,38 @@ type PlayerState = {
 
 local states: { [Player]: PlayerState } = {}
 
+-- ===== Restock mutation charm (Phase 3) =====
+-- RestockShopService.ConsumeCharm(player) returns the charm's mutation-chance
+-- multiplier while charmed rolls remain, else nil. The service is required
+-- lazily (and under pcall) at call time: it boots after ProductionService in
+-- the server bootstrap order, and a top-level require here would create an
+-- ordering/cycle hazard. nil / any failure => multiplier 1.
+
+local restockShopService: any = nil
+
+local function consumeCharmMult(player: Player): number
+	if restockShopService == nil then
+		local ok, service = pcall(function(): any
+			local module = script.Parent:FindFirstChild("RestockShopService")
+			if module ~= nil and module:IsA("ModuleScript") then
+				return require(module) :: any
+			end
+			return nil
+		end)
+		if ok and typeof(service) == "table" then
+			restockShopService = service
+		end
+	end
+	if restockShopService == nil or typeof(restockShopService.ConsumeCharm) ~= "function" then
+		return 1
+	end
+	local ok, mult = pcall(restockShopService.ConsumeCharm, player)
+	if ok and typeof(mult) == "number" then
+		return mult
+	end
+	return 1
+end
+
 -- The active server event (from Workspace attributes set by EventService),
 -- or nil when none / expired.
 local function getActiveEvent(): typeof(Events[1])?
@@ -196,12 +228,28 @@ local function produceTick(player: Player, state: PlayerState, profile: Types.Pr
 
 	local event = getActiveEvent()
 	local effectiveLuck = RollLogic.GetEffectiveLuck(profile, os.time(), if event then event.luckBonus else 0)
-	local keyboardIndex = RollLogic.RollKeyboard(factoryTier, effectiveLuck, rng)
+	-- profile.pity rides along as the 3rd arg (bad-luck protection; see
+	-- GameConfig.Pity and RollLogic's pityCount parameter).
+	local keyboardIndex = RollLogic.RollKeyboard(factoryTier, effectiveLuck, rng, profile.pity)
 	local def = Keyboards[keyboardIndex]
 	if def == nil then
 		return
 	end
-	local mutationId = RollLogic.RollMutation(rng, if event then event.mutationMult else 1)
+
+	-- Pity counter (contract): a TargetTier+ roll resets it, anything else
+	-- ramps it. MarkDirty only — no Sync per roll; AddKeyboard's Sync at
+	-- collect time carries the new value to the client.
+	if def.rarityTier >= GameConfig.Pity.TargetTier then
+		profile.pity = 0
+	else
+		profile.pity += 1
+	end
+	DataService.MarkDirty(player)
+
+	-- Mutation roll: active event's multiplier times any restock-stall
+	-- mutation charm the player is carrying (1 when neither applies).
+	local mutationMult = (if event then event.mutationMult else 1) * consumeCharmMult(player)
+	local mutationId = RollLogic.RollMutation(rng, mutationMult)
 	local mutationDef = Catalog.GetMutation(mutationId)
 	local rarity = Catalog.GetRarity(def.rarityTier)
 	local glow = (rarity ~= nil and rarity.glow) or mutationDef ~= nil
