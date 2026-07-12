@@ -40,7 +40,8 @@ local LANE_GAP = 12 -- spacing between conveyor lanes
 local BELT_LEN = 62 -- belt length; the belt reaches into the factory mouth
 local BELT_CZ = 3 -- belt part centre z
 local STAND_Z = -50 -- display stands along the front edge
-local STAND_X = { -45, -30, -15, 15, 30, 45 }
+-- Right side stops at 36 so the sell stall owns the front-right corner.
+local STAND_X = { -45, -30, -15, 12, 24, 36 }
 local PAD_HEIGHT = 0.4
 local PAD_DIAMETER = 7
 local POP_SOUND = "rbxasset://sounds/electronicpingshort.wav"
@@ -63,6 +64,8 @@ local PALETTE = {
 	arch = Color3.fromRGB(137, 180, 250),
 	bin = Color3.fromRGB(92, 108, 128),
 	sell = Color3.fromRGB(96, 222, 133),
+	sellDark = Color3.fromRGB(38, 122, 74),
+	steel = Color3.fromRGB(126, 132, 146),
 	stone = Color3.fromRGB(214, 208, 196),
 	stoneLight = Color3.fromRGB(236, 230, 218),
 	spawn = Color3.fromRGB(196, 178, 255),
@@ -80,6 +83,16 @@ local PAD_KIND_COLORS: { [string]: Color3 } = {
 	storage = Color3.fromRGB(168, 168, 178), -- grey
 	display = Color3.fromRGB(255, 142, 202), -- pink
 	rebirth = Color3.fromRGB(255, 245, 200), -- radiant white-gold
+}
+
+local PAD_KIND_ICONS: { [string]: string } = {
+	factoryTier = "🏭",
+	conveyor = "🚚",
+	speed = "⚡",
+	luck = "🍀",
+	storage = "📦",
+	display = "🖼️",
+	rebirth = "🔄",
 }
 
 -- Visibility bookkeeping: original property values are parked in attributes
@@ -398,7 +411,9 @@ local function buildConveyor(plot: Model, origin: CFrame, lane: number)
 	conveyor.Name = "Conveyor" .. tostring(lane)
 	local x = laneX(lane)
 
-	local belt = part("Belt", Vector3.new(3.4, 0.6, BELT_LEN), origin * CFrame.new(x, 0.9, BELT_CZ), PALETTE.belt, nil, conveyor)
+	-- Wider industrial belt on a raised steel frame (still well inside the
+	-- 12-stud lane pitch: outermost detail sits at ±2.75).
+	local belt = part("Belt", Vector3.new(4.6, 0.7, BELT_LEN), origin * CFrame.new(x, 1.0, BELT_CZ), PALETTE.belt, nil, conveyor)
 
 	-- Ride anchors: keyboards tween BeltStart -> BeltEnd (ProductionService).
 	local beltStart = Instance.new("Attachment")
@@ -411,36 +426,64 @@ local function buildConveyor(plot: Model, origin: CFrame, lane: number)
 	beltEnd.Parent = belt
 
 	-- Static "animated" segment stripes.
-	for z = -25, 31, 8 do
-		local stripe = part("Stripe", Vector3.new(3, 0.12, 0.9), origin * CFrame.new(x, 1.26, z), PALETTE.stripe, nil, conveyor)
+	for z = -26, 32, 6 do
+		local stripe = part("Stripe", Vector3.new(4.2, 0.12, 1.1), origin * CFrame.new(x, 1.41, z), PALETTE.stripe, nil, conveyor)
 		stripe.CanCollide = false
 	end
 
-	-- Side rails.
-	part("Rail", Vector3.new(0.6, 1.1, BELT_LEN), origin * CFrame.new(x - 2.2, 1.05, BELT_CZ), PALETTE.rail, Enum.Material.WoodPlanks, conveyor)
-	part("Rail", Vector3.new(0.6, 1.1, BELT_LEN), origin * CFrame.new(x + 2.2, 1.05, BELT_CZ), PALETTE.rail, Enum.Material.WoodPlanks, conveyor)
+	-- Drum rollers poke out of both ends (plain X-axis cylinders).
+	for _, endZ in { BELT_CZ - BELT_LEN / 2 - 0.35, BELT_CZ + BELT_LEN / 2 + 0.35 } do
+		local roller = part("Roller", Vector3.new(4.8, 1.1, 1.1), origin * CFrame.new(x, 1.0, endZ), PALETTE.steel, Enum.Material.Metal, conveyor)
+		roller.Shape = Enum.PartType.Cylinder
+		roller.CanCollide = false
+	end
 
-	-- Collector arch + bin at the front end.
-	part("ArchPost", Vector3.new(0.8, 5.5, 0.8), origin * CFrame.new(x - 2.2, 2.75, -30), PALETTE.arch, nil, conveyor)
-	part("ArchPost", Vector3.new(0.8, 5.5, 0.8), origin * CFrame.new(x + 2.2, 2.75, -30), PALETTE.arch, nil, conveyor)
-	part("ArchTop", Vector3.new(5.6, 0.8, 0.8), origin * CFrame.new(x, 5.9, -30), PALETTE.arch, nil, conveyor)
-	part("Collector", Vector3.new(4.4, 1.8, 3), origin * CFrame.new(x, 0.9, -33), PALETTE.bin, nil, conveyor)
+	-- Dark side skirts with a glowing accent line, topped by wooden hand rails.
+	for _, side in { -1, 1 } do
+		part("SidePanel", Vector3.new(0.4, 1.5, BELT_LEN), origin * CFrame.new(x + side * 2.5, 0.85, BELT_CZ), PALETTE.machine, Enum.Material.Metal, conveyor)
+		local glowLine = part("PanelGlow", Vector3.new(0.1, 0.18, BELT_LEN - 2), origin * CFrame.new(x + side * 2.72, 1.15, BELT_CZ), PALETTE.arch, Enum.Material.Neon, conveyor)
+		glowLine.CanCollide = false
+		part("Rail", Vector3.new(0.7, 0.35, BELT_LEN), origin * CFrame.new(x + side * 2.5, 1.75, BELT_CZ), PALETTE.rail, Enum.Material.WoodPlanks, conveyor)
+	end
+
+	-- Support legs under the frame.
+	for z = -24, 30, 9 do
+		for _, side in { -1, 1 } do
+			part("Leg", Vector3.new(0.5, 0.7, 0.5), origin * CFrame.new(x + side * 1.9, 0.35, z), PALETTE.steel, Enum.Material.Metal, conveyor)
+		end
+	end
+
+	-- Collector arch with a glowing "scanner" bar + bigger bin at the front end.
+	part("ArchPost", Vector3.new(0.9, 6.4, 0.9), origin * CFrame.new(x - 2.75, 3.2, -30), PALETTE.arch, nil, conveyor)
+	part("ArchPost", Vector3.new(0.9, 6.4, 0.9), origin * CFrame.new(x + 2.75, 3.2, -30), PALETTE.arch, nil, conveyor)
+	part("ArchTop", Vector3.new(6.4, 0.9, 0.9), origin * CFrame.new(x, 6.85, -30), PALETTE.arch, nil, conveyor)
+	local scanner = part("Scanner", Vector3.new(5.6, 0.22, 0.22), origin * CFrame.new(x, 5.3, -30), PALETTE.stripe, Enum.Material.Neon, conveyor)
+	scanner.CanCollide = false
+	part("Collector", Vector3.new(5.4, 2.2, 3.4), origin * CFrame.new(x, 1.1, -33.6), PALETTE.bin, nil, conveyor)
+	local mouth = part("CollectorMouth", Vector3.new(4.6, 1.4, 0.2), origin * CFrame.new(x, 1.3, -31.8), PALETTE.arch, Enum.Material.Neon, conveyor)
+	mouth.CanCollide = false
 
 	conveyor.Parent = plot
 end
 
+-- Market stall in the front-right corner, angled to face the plot centre.
+-- The glowing "SellZone" pad (naming contract!) sits in front of the counter.
 local function buildSellZone(plot: Model, origin: CFrame)
-	local zone = part("SellZone", Vector3.new(10, 0.6, 8), origin * CFrame.new(40, 0.3, -14), PALETTE.sell, Enum.Material.Neon, plot)
+	local sellCF = origin * CFrame.new(46, 0, -46) * CFrame.Angles(0, math.rad(135), 0)
+
+	-- Dark plinth under the pad grounds the glow.
+	part("SellRim", Vector3.new(10.4, 0.35, 8.4), sellCF * CFrame.new(0, 0.175, -6), PALETTE.sellDark, nil, plot)
+	local zone = part("SellZone", Vector3.new(9, 0.5, 7), sellCF * CFrame.new(0, 0.45, -6), PALETTE.sell, Enum.Material.Neon, plot)
 
 	local light = Instance.new("PointLight")
 	light.Color = PALETTE.sell
-	light.Range = 14
-	light.Brightness = 0.7
+	light.Range = 16
+	light.Brightness = 0.8
 	light.Parent = zone
 
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "Label"
-	gui.Size = UDim2.new(5, 0, 1.8, 0)
+	gui.Size = UDim2.new(6, 0, 1.8, 0)
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
 	gui.MaxDistance = 120
 	gui.LightInfluence = 0
@@ -448,7 +491,7 @@ local function buildSellZone(plot: Model, origin: CFrame)
 	label.BackgroundTransparency = 1
 	label.Size = UDim2.fromScale(1, 1)
 	label.Font = Enum.Font.FredokaOne
-	label.Text = "SELL"
+	label.Text = "💰 SELL"
 	label.TextScaled = true
 	label.TextColor3 = PALETTE.sell
 	label.TextStrokeColor3 = Color3.fromRGB(30, 60, 40)
@@ -456,13 +499,58 @@ local function buildSellZone(plot: Model, origin: CFrame)
 	label.Parent = gui
 	gui.Parent = zone
 
-	-- Little counter awning behind the pad (pure decoration).
-	local counter = Instance.new("Model")
-	counter.Name = "SellCounter"
-	part("CounterPost", Vector3.new(0.8, 6, 0.8), origin * CFrame.new(36, 3, -10.5), PALETTE.wood, Enum.Material.WoodPlanks, counter)
-	part("CounterPost", Vector3.new(0.8, 6, 0.8), origin * CFrame.new(44, 3, -10.5), PALETTE.wood, Enum.Material.WoodPlanks, counter)
-	part("Awning", Vector3.new(10.5, 0.5, 5.5), origin * CFrame.new(40, 6.4, -12.5) * CFrame.Angles(math.rad(12), 0, 0), PALETTE.sell, nil, counter)
-	counter.Parent = plot
+	-- The stall itself: counter, four posts, striped awning, back wall,
+	-- register and coin stacks (pure decoration).
+	local stall = Instance.new("Model")
+	stall.Name = "SellStall"
+
+	part("Counter", Vector3.new(10, 2.2, 2.2), sellCF * CFrame.new(0, 1.1, -1.2), PALETTE.wood, Enum.Material.WoodPlanks, stall)
+	part("CounterTop", Vector3.new(10.8, 0.4, 3), sellCF * CFrame.new(0, 2.4, -1.2), PALETTE.fence, Enum.Material.WoodPlanks, stall)
+	for _, sx in { -4.8, 4.8 } do
+		for _, sz in { -2.4, 1.8 } do
+			part("StallPost", Vector3.new(0.7, 7, 0.7), sellCF * CFrame.new(sx, 3.5, sz), PALETTE.wood, Enum.Material.WoodPlanks, stall)
+		end
+	end
+	part("StallBack", Vector3.new(10, 3.6, 0.5), sellCF * CFrame.new(0, 1.8, 2.0), PALETTE.wood, Enum.Material.WoodPlanks, stall)
+
+	-- Green/cream striped awning, tilted toward the plot.
+	for i = 0, 6 do
+		local stripe = part(
+			"AwningStripe",
+			Vector3.new(1.66, 0.3, 5.8),
+			sellCF * CFrame.new(-4.98 + i * 1.66, 6.95, -0.4) * CFrame.Angles(math.rad(14), 0, 0),
+			if i % 2 == 0 then PALETTE.sell else PALETTE.fence,
+			nil,
+			stall
+		)
+		stripe.CanCollide = false
+	end
+
+	-- Cash register with a glowing screen + gold coin stacks on the counter.
+	part("Register", Vector3.new(1.6, 1.2, 1.2), sellCF * CFrame.new(3.1, 3.2, -1.2), PALETTE.machine, Enum.Material.Metal, stall)
+	local screen = part("RegisterScreen", Vector3.new(1.2, 0.7, 0.15), sellCF * CFrame.new(3.1, 3.4, -1.85), PALETTE.sell, Enum.Material.Neon, stall)
+	screen.CanCollide = false
+	cylinder("CoinStack", 0.5, 1.2, sellCF * CFrame.new(-2.6, 2.85, -1.1), PALETTE.signGold, Enum.Material.Metal, stall)
+	cylinder("CoinStack", 0.32, 1.2, sellCF * CFrame.new(-3.6, 2.76, -1.5), PALETTE.signGold, Enum.Material.Metal, stall)
+
+	-- Hanging board over the counter.
+	local board = part("SellSign", Vector3.new(6.5, 1.6, 0.4), sellCF * CFrame.new(0, 5.1, -2.6), PALETTE.signBoard, Enum.Material.WoodPlanks, stall)
+	local signGui = Instance.new("SurfaceGui")
+	signGui.Face = Enum.NormalId.Front
+	signGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	signGui.PixelsPerStud = 30
+	signGui.LightInfluence = 0
+	local signLabel = Instance.new("TextLabel")
+	signLabel.BackgroundTransparency = 1
+	signLabel.Size = UDim2.fromScale(1, 1)
+	signLabel.Font = Enum.Font.FredokaOne
+	signLabel.Text = "KEYBOARD BUY-BACK"
+	signLabel.TextScaled = true
+	signLabel.TextColor3 = PALETTE.sellDark
+	signLabel.Parent = signGui
+	signGui.Parent = board
+
+	stall.Parent = plot
 end
 
 local function buildDisplayStand(plot: Model, origin: CFrame, standIndex: number)
@@ -499,7 +587,7 @@ local function padLocalCFrame(kind: string, level: number): CFrame
 	elseif kind == "luck" then
 		return CFrame.new(-40, y, 0) -- left edge, mid-plot
 	elseif kind == "storage" then
-		return CFrame.new(40, y, 8) -- right edge, near the sell counter
+		return CFrame.new(40, y, 8) -- right edge, on the way to the sell corner
 	elseif kind == "rebirth" then
 		return CFrame.new(0, y, 20) -- center stage, in front of the factory
 	end
@@ -551,11 +639,19 @@ local function buildPads(plot: Model, origin: CFrame)
 		padModel.Name = padDef.id
 
 		local color = PAD_KIND_COLORS[padDef.kind] or Color3.fromRGB(220, 220, 220)
+		local baseCF = origin * padLocalCFrame(padDef.kind, padDef.level)
+
+		-- Layered button: stone plinth, dark colored ring, glowing core disc.
+		local rim = cylinder("PadRim", 0.35, PAD_DIAMETER + 1.8, baseCF * CFrame.new(0, -0.025, 0), PALETTE.stone, nil, padModel)
+		rim.CanTouch = false
+		local ring = cylinder("PadRing", 0.44, PAD_DIAMETER + 0.5, baseCF * CFrame.new(0, 0.02, 0), color:Lerp(Color3.new(0, 0, 0), 0.45), nil, padModel)
+		ring.CanCollide = false
+		ring.CanTouch = false
 		local padPart = cylinder(
 			"Pad",
 			PAD_HEIGHT,
-			PAD_DIAMETER,
-			origin * padLocalCFrame(padDef.kind, padDef.level),
+			PAD_DIAMETER - 0.8,
+			baseCF * CFrame.new(0, 0.06, 0),
 			color,
 			Enum.Material.Neon,
 			padModel
@@ -577,7 +673,7 @@ local function buildPads(plot: Model, origin: CFrame)
 			local costValue = Catalog.GetPadCost(padDef.id)
 			costText = if costValue ~= nil then "$" .. abbreviate(costValue) else ""
 		end
-		addPadLabel(padPart, padDef.name, costText)
+		addPadLabel(padPart, (PAD_KIND_ICONS[padDef.kind] or "🛒") .. " " .. padDef.name, costText)
 
 		padModel.PrimaryPart = padPart
 		padModel.Parent = padsFolder
@@ -608,13 +704,16 @@ local function buildSign(plot: Model, origin: CFrame, player: Player)
 	local sign = Instance.new("Model")
 	sign.Name = "Sign"
 
-	-- Right beside the gate gap (|x| < 10), just OUTSIDE the front fence line
-	-- and angled toward the approach path — impossible to miss walking in,
-	-- impossible to bump into.
-	local signCF = origin * CFrame.new(15.5, 0, -59.5) * CFrame.Angles(0, math.rad(-18), 0)
-	part("SignPost", Vector3.new(0.8, 6, 0.8), signCF * CFrame.new(-5.6, 3, 0), PALETTE.wood, Enum.Material.WoodPlanks, sign)
-	part("SignPost", Vector3.new(0.8, 6, 0.8), signCF * CFrame.new(5.6, 3, 0), PALETTE.wood, Enum.Material.WoodPlanks, sign)
+	-- Right beside the gate gap (|x| < 10), just OUTSIDE the front fence line,
+	-- squared up with the fence so it reads dead straight on the approach.
+	local signCF = origin * CFrame.new(15.5, 0, -59.5)
+	-- Posts sit fully BEHIND the board: board is 0.6 deep centred at z 0
+	-- (back face +0.3), posts are 0.8 deep centred at z 0.7 (front face +0.3).
+	part("SignPost", Vector3.new(0.8, 7.4, 0.8), signCF * CFrame.new(-5.6, 3.7, 0.7), PALETTE.wood, Enum.Material.WoodPlanks, sign)
+	part("SignPost", Vector3.new(0.8, 7.4, 0.8), signCF * CFrame.new(5.6, 3.7, 0.7), PALETTE.wood, Enum.Material.WoodPlanks, sign)
 	local board = part("SignBoard", Vector3.new(13.5, 3.4, 0.6), signCF * CFrame.new(0, 6.2, 0), PALETTE.signBoard, Enum.Material.WoodPlanks, sign)
+	-- Little roof cap on top of the board.
+	part("SignCap", Vector3.new(14.3, 0.5, 1.2), signCF * CFrame.new(0, 8.15, 0.15), PALETTE.roof, Enum.Material.WoodPlanks, sign)
 
 	-- Front face (-Z) looks toward the hub, so visitors read it walking in.
 	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do

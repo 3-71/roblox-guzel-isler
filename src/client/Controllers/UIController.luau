@@ -1300,17 +1300,23 @@ local function renderShop()
 		y += 30
 	end
 
-	local function productRow(name: string, description: string, buttonText: string, enabled: boolean, accentColor: Color3, onBuy: () -> ())
+	-- nameColor tints the title and strokes the card (keycrates pass their
+	-- rarity color); nil keeps the plain gamepass/boost look.
+	local function productRow(name: string, description: string, buttonText: string, enabled: boolean, accentColor: Color3, onBuy: () -> (), nameColor: Color3?)
 		local row = mkFrame(scroll, {
 			Position = UDim2.fromOffset(0, y),
 			Size = UDim2.new(1, -8, 0, 62),
 			BackgroundColor3 = PANEL_BG2,
 		})
 		corner(row, 10)
+		if nameColor then
+			stroke(row, nameColor, 2)
+		end
 		mkText(row, {
 			Position = UDim2.fromOffset(10, 6),
 			Size = UDim2.new(1, -120, 0, 24),
 			Text = name,
+			TextColor3 = nameColor or TEXT_MAIN,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		})
 		mkText(row, {
@@ -1357,8 +1363,26 @@ local function renderShop()
 		)
 	end
 
+	-- Keycrates: dev products with keyboardTier, on rarity-colored cards.
+	sectionHeader("KEYCRATES — guaranteed rarity")
+	for _, def in Products.DevProducts do
+		local keyboardTier = def.keyboardTier
+		if keyboardTier == nil then
+			continue
+		end
+		local rarity = Catalog.GetRarity(keyboardTier)
+		local rarityColor = if rarity then rarity.color else GOOD
+		local configured = def.id ~= 0
+		productRow(def.name, def.description, if configured then "Buy" else "Soon", configured, rarityColor, function()
+			MarketplaceService:PromptProductPurchase(localPlayer, def.id)
+		end, rarityColor)
+	end
+
 	sectionHeader("BOOSTS & MORE")
 	for _, def in Products.DevProducts do
+		if def.keyboardTier ~= nil then
+			continue -- rendered in the KEYCRATES section above
+		end
 		local configured = def.id ~= 0
 		productRow(def.name, def.description, if configured then "Buy" else "Soon", configured, GOOD, function()
 			MarketplaceService:PromptProductPurchase(localPlayer, def.id)
@@ -2033,6 +2057,76 @@ local function watchSellZone()
 	end)
 end
 
+-- ===== Robux shop pad proximity (hub Keycrate Shop kiosk) =====
+
+-- Stepping on the glowing "RobuxShopPad" in front of the hub Keycrate Shop
+-- opens the Robux shop panel. Same rebind loop as watchSellZone: HubBuilder
+-- rebuilds the kiosk destroy-by-name, so when this pad dies we search for
+-- its replacement under Workspace.Hub.
+local function watchRobuxShopPad()
+	task.spawn(function()
+		local debounce = 0
+		while true do
+			local hub = workspace:FindFirstChild("Hub")
+			local pad = if hub then hub:FindFirstChild("RobuxShopPad", true) else nil
+			if pad and pad:IsA("BasePart") then
+				local connection = pad.Touched:Connect(function(hit)
+					local character = localPlayer.Character
+					if character and hit:IsDescendantOf(character) and os.clock() - debounce > 1 then
+						debounce = os.clock()
+						if openPanelName ~= "shop" then
+							togglePanel("shop")
+						end
+					end
+				end)
+				while pad:IsDescendantOf(game) do
+					task.wait(1)
+				end
+				connection:Disconnect()
+			end
+			task.wait(1)
+		end
+	end)
+end
+
+-- ===== typing reward floaters (TypeReward remote) =====
+
+-- One little "+$X" per accepted keypress on the equipped keyboard, drifting
+-- up from just above the hotbar with random x-jitter so rapid presses read
+-- as a money shower. Deliberately cheap: labels beyond the alive cap are
+-- dropped (a dense shower hides the gaps), and each label destroys itself
+-- right after its ~0.7s tween.
+local TYPE_FLOATER_MAX = 10
+local TYPE_FLOATER_SECONDS = 0.7
+
+local typeFloatersAlive = 0
+local typeFloaterRng = Random.new()
+
+local function showTypeReward(amount: number)
+	if typeFloatersAlive >= TYPE_FLOATER_MAX then
+		return
+	end
+	typeFloatersAlive += 1
+	local jitterX = typeFloaterRng:NextInteger(-70, 70)
+	local floater = mkText(screenGui, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, jitterX, 1, -120),
+		Size = UDim2.fromOffset(110, 24),
+		Text = "+$" .. abbreviate(amount),
+		TextColor3 = GOOD,
+		TextScaled = false,
+		TextSize = 18,
+	})
+	TweenService:Create(floater, TweenInfo.new(TYPE_FLOATER_SECONDS, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.new(0.5, jitterX, 1, -170),
+		TextTransparency = 1,
+	}):Play()
+	task.delay(TYPE_FLOATER_SECONDS + 0.05, function()
+		typeFloatersAlive -= 1
+		floater:Destroy()
+	end)
+end
+
 -- ===== wiring =====
 
 function UIController.Start()
@@ -2053,6 +2147,7 @@ function UIController.Start()
 	buildRail()
 	buildToasts()
 	watchSellZone()
+	watchRobuxShopPad()
 
 	Remotes.DataSync.OnClientEvent:Connect(function(snapshot: Types.Profile)
 		profile = snapshot
@@ -2119,6 +2214,14 @@ function UIController.Start()
 			local general = channels.RBXGeneral
 			general:DisplaySystemMessage(`<font color="#{rarity.color:ToHex()}">{message}</font>`)
 		end)
+	end)
+
+	-- Per-keypress typing money: keep it feather-light, it can fire many
+	-- times a second while the player hammers the equipped keyboard.
+	Remotes.TypeReward.OnClientEvent:Connect(function(amount: number)
+		if typeof(amount) == "number" and amount > 0 then
+			showTypeReward(amount)
+		end
 	end)
 
 	Remotes.OfflineReport.OnClientEvent:Connect(showOfflineReport)

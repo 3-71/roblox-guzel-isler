@@ -26,6 +26,14 @@
 --                                   "Countdown" TextLabels — RestockShopService
 --                                   writes the countdown text — plus a
 --                                   BillboardGui restock hint.
+--
+-- Monetization contract, same placement rule (direct child of Workspace.Hub):
+--   KeycrateShop                    cozy Robux kiosk Model (giant "R$" keycap
+--                                   on the roof + BillboardGui title). Holds a
+--                                   glowing Part named exactly "RobuxShopPad"
+--                                   (Anchored, CanCollide=false, CanTouch=true)
+--                                   in front of the counter — UIController
+--                                   opens the Robux shop panel on touch.
 
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -68,6 +76,8 @@ local PALETTE = {
 	awningCream = Color3.fromRGB(250, 244, 228),
 	crateWood = Color3.fromRGB(191, 146, 97),
 	crateLid = Color3.fromRGB(146, 104, 66),
+	robuxGreen = Color3.fromRGB(72, 199, 121),
+	robuxDark = Color3.fromRGB(34, 84, 56),
 }
 
 -- Pastel keycap cubes decorating the top of the big sign.
@@ -474,6 +484,118 @@ local function buildCrateStall(hubFolder: Folder)
 	stall.Parent = hubFolder
 end
 
+-- ===== Monetization: the "Keycrate Shop" Robux kiosk =====
+
+-- Cozy kiosk selling guaranteed-rarity keycrates for Robux: counter, four
+-- posts, flat roof crowned by a giant "R$" keycap, and the glowing
+-- "RobuxShopPad" touch pad in front (UIController opens the Robux shop panel
+-- when the local character steps on it). Parented DIRECTLY to Workspace.Hub
+-- as "KeycrateShop" (destroy-by-name rebuild, same pattern as CrateStall).
+--
+-- Placement: angle 4.5 * step, radius 28 — the free half-step slot between
+-- the race pad (3.5 * step, r 22) and the EarnedBoard (5.5 * step, r 33),
+-- inside the bench ring (r 34) and well clear of the CrateStall (1.5 * step),
+-- monument (2.5 * step) and big sign (6.5 * step).
+local function buildKeycrateShop(hubFolder: Folder)
+	local old = hubFolder:FindFirstChild("KeycrateShop")
+	if old ~= nil then
+		old:Destroy()
+	end
+
+	local kiosk = Instance.new("Model")
+	kiosk.Name = "KeycrateShop"
+
+	local step = math.pi * 2 / math.max(GameConfig.PlotCount, 1)
+	local angle = 4.5 * step
+	local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+	local basePos = direction * 28
+	-- Local space: -Z looks at the plaza centre (the kiosk's front).
+	local footCF = CFrame.lookAt(Vector3.new(basePos.X, PLAZA_TOP_Y, basePos.Z), Vector3.new(0, PLAZA_TOP_Y, 0))
+
+	-- Counter + serving top.
+	local counter = part("Counter", Vector3.new(7.4, 2.4, 2.2), footCF * CFrame.new(0, 1.2, -1.4), PALETTE.wood, Enum.Material.WoodPlanks, kiosk)
+	part("CounterTop", Vector3.new(8.2, 0.4, 2.8), footCF * CFrame.new(0, 2.6, -1.4), PALETTE.awningCream, Enum.Material.WoodPlanks, kiosk)
+
+	-- Four corner posts holding the flat roof.
+	for _, x in { -3.55, 3.55 } do
+		for _, z in { -2.2, 2.2 } do
+			part("KioskPost", Vector3.new(0.9, 7.6, 0.9), footCF * CFrame.new(x, 3.8, z), PALETTE.trunk, Enum.Material.WoodPlanks, kiosk)
+		end
+	end
+	local roof = part("KioskRoof", Vector3.new(9, 0.5, 6.2), footCF * CFrame.new(0, 7.85, 0), PALETTE.robuxDark, Enum.Material.WoodPlanks, kiosk)
+
+	-- Giant keycap crowning the roof: wide base + narrower top slab, with the
+	-- "R$" legend on the plaza-facing and outward faces (same double-sided
+	-- treatment as the big sign).
+	local keycap = part("RoofKeycap", Vector3.new(4.6, 3.4, 4.6), footCF * CFrame.new(0, 9.8, 0), PALETTE.awningCream, nil, kiosk)
+	part("RoofKeycapTop", Vector3.new(3.6, 0.7, 3.6), footCF * CFrame.new(0, 11.85, 0), PALETTE.robuxGreen, nil, kiosk)
+	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
+		local gui = Instance.new("SurfaceGui")
+		gui.Face = face
+		gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		gui.PixelsPerStud = 50
+		gui.LightInfluence = 0
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.fromScale(1, 1)
+		label.Font = Enum.Font.FredokaOne
+		label.Text = "R$"
+		label.TextScaled = true
+		label.TextColor3 = PALETTE.robuxGreen
+		label.TextStrokeColor3 = PALETTE.robuxDark
+		label.TextStrokeTransparency = 0.4
+		label.Parent = gui
+		gui.Parent = keycap
+	end
+
+	-- Keycrate props on the counter (reuses the crate builder).
+	buildCrate(kiosk, footCF * CFrame.new(-2.2, 3.6, -1.4) * CFrame.Angles(0, math.rad(20), 0), 1.6, PALETTE.robuxGreen)
+	buildCrate(kiosk, footCF * CFrame.new(1.9, 3.5, -1.3) * CFrame.Angles(0, math.rad(-25), 0), 1.4, PALETTE.boardGold)
+
+	-- Floating title above the keycap.
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "Label"
+	billboard.Size = UDim2.new(14, 0, 3.2, 0)
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, 4.2, 0)
+	billboard.MaxDistance = 140
+	billboard.LightInfluence = 0
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.fromScale(1, 1)
+	title.Font = Enum.Font.FredokaOne
+	title.Text = "⌨ KEYCRATE SHOP"
+	title.TextScaled = true
+	title.TextWrapped = true
+	title.TextColor3 = PALETTE.robuxGreen
+	title.TextStrokeColor3 = PALETTE.robuxDark
+	title.TextStrokeTransparency = 0.2
+	title.Parent = billboard
+	billboard.Parent = keycap
+
+	-- Glowing touch pad in front of the counter. Contract name: UIController
+	-- listens for Touched on the "RobuxShopPad" descendant of Workspace.Hub.
+	local pad = cylinder(
+		"RobuxShopPad",
+		0.4,
+		6,
+		footCF * CFrame.new(0, 0.12, -4.6),
+		PALETTE.robuxGreen,
+		Enum.Material.Neon,
+		kiosk
+	)
+	pad.CanCollide = false
+	pad.CanTouch = true
+
+	local light = Instance.new("PointLight")
+	light.Color = PALETTE.robuxGreen
+	light.Range = 12
+	light.Brightness = 0.7
+	light.Parent = pad
+
+	kiosk.PrimaryPart = counter
+	kiosk.Parent = hubFolder
+end
+
 -- Builds (or rebuilds, replacing in place) the two plaza leaderboard boards
 -- and returns (EarnedBoard, CollectionBoard). Build() already calls this, so
 -- the boards exist by the time any service starts; calling again is safe.
@@ -564,6 +686,7 @@ function HubBuilder.Build(): Model
 	HubBuilder.BuildLeaderboards()
 	buildRacePad(hubFolder)
 	buildCrateStall(hubFolder)
+	buildKeycrateShop(hubFolder)
 
 	return hub
 end

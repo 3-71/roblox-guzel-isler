@@ -92,12 +92,32 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 	local baseCapMaterial = if style == "crystal" then Enum.Material.Neon else Enum.Material.SmoothPlastic
 	local capTransparency = if style == "crystal" then 0.15 else 0
 
-	local function placeCap(baseCF: CFrame, x: number, z: number, width: number, accent: boolean)
+	-- Multi-colour keycaps: every board fans hues around its keycap colour so
+	-- the rows read as distinct colour bands; glowing rarities (Mechanical+)
+	-- go full diagonal rainbow like a showpiece RGB board. Near-grey boards
+	-- get a light/dark checkerboard instead — cheap tiers stay deliberately
+	-- drab so rarity still reads at a glance.
+	local capHue, capSat, capVal = look.keycapColor:ToHSV()
+	local function capColor(r: number, c: number): Color3
+		if glow then
+			local hue = (capHue + (r - 1) / rows + (c - 1) / (cols * rows)) % 1
+			return Color3.fromHSV(hue, math.max(capSat, 0.65), math.max(capVal, 0.9))
+		end
+		if capSat < 0.12 then
+			local shade = if (r + c) % 2 == 0 then 0.07 else -0.06
+			return Color3.fromHSV(capHue, capSat, math.clamp(capVal + shade, 0.05, 1))
+		end
+		local hue = (capHue + (r - (rows + 1) / 2) * 0.05) % 1
+		local val = math.clamp(capVal + (if c % 2 == 0 then 0.05 else -0.04), 0.05, 1)
+		return Color3.fromHSV(hue, capSat, val)
+	end
+
+	local function placeCap(baseCF: CFrame, x: number, z: number, width: number, accent: boolean, rowColor: Color3?)
 		local cap = newPart(
 			"Part",
 			Vector3.new(width, capH, capDepth),
 			baseCF * off(x, capY, z),
-			if accent then look.accentColor else look.keycapColor
+			if accent then look.accentColor else (rowColor or look.keycapColor)
 		)
 		cap.Name = "Keycap"
 		cap.Material = if accent and glow then Enum.Material.Neon else baseCapMaterial
@@ -118,9 +138,9 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 					-- Wider modifier keys (Tab/Shift/Enter feel) on the outside
 					-- columns, nudged outward into the margin.
 					local shift = if c == 1 then -pitchX * 0.08 else pitchX * 0.08
-					placeCap(baseCF, x + shift, z, capW * 1.22, r == 2 and c == gridCols)
+					placeCap(baseCF, x + shift, z, capW * 1.22, r == 2 and c == gridCols, capColor(r, c))
 				else
-					placeCap(baseCF, x, z, capW, (r + c) % 5 == 0)
+					placeCap(baseCF, x, z, capW, (r + c) % 5 == 0, capColor(r, c))
 				end
 			end
 		end
@@ -182,6 +202,13 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 		-- Tiny brand badge on the top-right bezel.
 		local badge = newPart("Part", Vector3.new(0.34, 0.02, 0.12), off(bodyW / 2 - 0.35, bodyH / 2 + 0.01, bodyD / 2 - 0.11), look.accentColor)
 		badge.Name = "Badge"
+
+		-- RGB light bar along the front bezel on glowing tiers.
+		if glow then
+			local bar = newPart("Part", Vector3.new(bodyW * 0.8, 0.05, 0.08), off(0, bodyH / 2 + 0.025, -bodyD / 2 + 0.07), look.accentColor)
+			bar.Name = "LightBar"
+			bar.Material = Enum.Material.Neon
+		end
 
 		-- Retro boards get the little power LED.
 		if style == "retro" then

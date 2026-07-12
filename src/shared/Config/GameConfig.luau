@@ -44,6 +44,12 @@ local GameConfig = {
 
 	-- ===== Typing / sounds =====
 	TypeRateLimitPerSecond = 10, -- server-side cap on TypeKeyRequest
+	-- Every accepted keypress on your EQUIPPED keyboard pays out a fraction of
+	-- that board's current sell value (EquipService batches the payouts).
+	TypingIncome = {
+		ValueFraction = 0.5, -- money per click = half the board's sell value
+		FlushSeconds = 1, -- batched into one AddMoney/Sync per interval
+	},
 	TypeSoundRange = 60, -- studs other players can hear your typing from
 	EquipRateLimitPerSecond = 4, -- server-side cap on EquipRequest
 	DisplayRateLimitPerSecond = 3, -- server-side cap on DisplayRequest

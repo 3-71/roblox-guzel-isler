@@ -520,3 +520,23 @@ stands render the right stage on join).
 5. client: UIController edits
 6. init.server.luau wiring (SecretService/SetsService/FusionService appended
    to the bootstrap order): integration
+
+# Live-ops additions (landed alongside Phase 4 contracts)
+
+## Typing income (EquipService)
+Every ACCEPTED TypeKeyRequest (rate limit 10/s) on the equipped keyboard pays
+`floor(GetSellValue(id, factoryTier, mutation, rebirths, stars, ageSeconds)
+* GameConfig.TypingIncome.ValueFraction)`. Payouts accrue in EquipService and
+flush through `EconomyService.AddMoney` once per `TypingIncome.FlushSeconds`
+(AddMoney runs a full DataSync — never call it per keypress). The client is
+told the per-press amount immediately via the `TypeReward` remote (server ->
+client, amount: number) for the floating "+$" popup. Flush also runs on
+PlayerRemoving, before the profile saves.
+
+## Robux keycrates (Products/MonetizationService/HubBuilder/UIController)
+Dev products with `keyboardTier: number?` grant a uniform-random NON-secret
+keyboard of exactly that rarity tier through InventoryService.AddKeyboard
+(normal ceremony fires). If the grant cannot land (inventory cap) the receipt
+still consumes: fall back to cash = that board's sell value + Notify. Hub has
+a "Keycrate Shop" kiosk with a touch pad named `RobuxShopPad` (client opens
+the Robux shop panel on touch).

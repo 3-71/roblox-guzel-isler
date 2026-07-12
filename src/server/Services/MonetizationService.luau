@@ -12,9 +12,13 @@
 -- Dev products: MarketplaceService.ProcessReceipt grants cash
 -- (EconomyService.AddMoney) or timed boosts (profile.boosts[key] = expiry,
 -- consumed by RollLogic.GetEffectiveLuck). The Luck Party product also gives
--- every online player a short serverLuckParty boost. Receipts are idempotent
--- within this server via an in-memory PurchaseId set; any grant failure
--- returns NotProcessedYet so Roblox retries later.
+-- every online player a short serverLuckParty boost. Keycrate products
+-- (keyboardTier) grant a uniform-random non-secret keyboard of that rarity
+-- tier via InventoryService.AddKeyboard (which fires the KeyboardCollected
+-- ceremony); if the inventory is at cap the crate pays out the keyboard's
+-- sell value in cash instead, so the receipt is ALWAYS consumable. Receipts
+-- are idempotent within this server via an in-memory PurchaseId set; any
+-- grant failure returns NotProcessedYet so Roblox retries later.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
@@ -22,17 +26,23 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.Shared
 local Products = require(Shared.Config.Products)
+local Keyboards = require(Shared.Config.Keyboards)
+local Catalog = require(Shared.Catalog)
 local Remotes = require(Shared.Remotes)
 local Types = require(Shared.Types)
 
 local DataService = require(script.Parent.DataService)
 local EconomyService = require(script.Parent.EconomyService)
+local InventoryService = require(script.Parent.InventoryService)
 
 local MonetizationService = {}
 
 -- How long everyone else's boost lasts when someone starts a Luck Party.
 -- (The buyer's own longer boost uses the product's `duration` field.)
 local SERVER_LUCK_PARTY_SECONDS = 300
+
+-- Uniform keycrate picks (never math.random — matches RollLogic's style).
+local crateRng = Random.new()
 
 -- Lookups by Roblox id; unconfigured entries (id == 0) never resolve.
 local passById: { [number]: Products.GamePassDef } = {}
@@ -116,6 +126,39 @@ local function applyProductEffect(buyer: Player, profile: Types.Profile, def: Pr
 	local duration = def.duration
 	if luckBonus ~= nil and duration ~= nil then
 		profile.boosts[def.key] = now + duration
+	end
+
+	local keyboardTier = def.keyboardTier
+	if keyboardTier ~= nil then
+		-- Keycrate: uniform pick over the tier's NON-SECRET boards (the same
+		-- pool a production roll draws from — secrets stay ritual-only).
+		local pool: { Keyboards.KeyboardDef } = {}
+		for _, keyboardDef in Keyboards do
+			if keyboardDef.rarityTier == keyboardTier and not keyboardDef.secret then
+				table.insert(pool, keyboardDef)
+			end
+		end
+		if #pool == 0 then
+			-- Config bug (no boards at this tier): error so the pcall in
+			-- processReceipt returns NotProcessedYet and the receipt retries
+			-- once the config is fixed — never silently eat a paid crate.
+			error(`no non-secret keyboards at rarity tier {keyboardTier} for {def.key}`)
+		end
+		local picked = pool[crateRng:NextInteger(1, #pool)]
+		-- AddKeyboard owns the whole grant ceremony: KeyboardCollected to the
+		-- buyer plus the flex/GlobalRoll spectacle for high tiers. It returns
+		-- nil at InventoryCap — the receipt must still be consumable, so the
+		-- crate falls back to the keyboard's sell value in cash.
+		local instance = InventoryService.AddKeyboard(buyer, picked.id, "keycrate")
+		if instance == nil then
+			local fallbackCash = Catalog.GetSellValue(picked.id, profile.upgrades.factoryTier)
+			EconomyService.AddMoney(buyer, fallbackCash)
+			Remotes.Notify:FireClient(
+				buyer,
+				"error",
+				`Inventory full — your {picked.name} was auto-sold for ${fallbackCash}. Make room before the next crate!`
+			)
+		end
 	end
 
 	local serverLuckBonus = def.serverLuckBonus

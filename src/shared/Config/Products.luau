@@ -21,6 +21,7 @@ export type DevProductDef = {
 	luckBonus: number?, -- personal luck levels while active
 	duration: number?, -- seconds the boost lasts
 	serverLuckBonus: number?, -- luck party: bonus for EVERYONE in the server
+	keyboardTier: number?, -- keycrate: grants one uniform-random non-secret keyboard of this rarity tier
 }
 
 local Products = {
@@ -36,6 +37,9 @@ local Products = {
 		{ key = "luckParty", id = 0, name = "LUCK PARTY", description = "+8 luck for you (30 min) and +3 for EVERYONE in the server for 5 minutes!", luckBonus = 8, duration = 1800, serverLuckBonus = 3 },
 		{ key = "cashSmall", id = 0, name = "Cash Stack", description = "Instant $100,000.", cash = 100_000 },
 		{ key = "cashBig", id = 0, name = "Cash Vault", description = "Instant $2,500,000.", cash = 2_500_000 },
+		{ key = "crateClicky", id = 0, name = "Clicky Keycrate", description = "A guaranteed Clicky (tier 5) keyboard. Satisfaction in every press.", keyboardTier = 5 },
+		{ key = "crateLegendary", id = 0, name = "Legendary Keycrate", description = "A guaranteed golden Legendary (tier 9) keyboard — beam included.", keyboardTier = 9 },
+		{ key = "crateGodly", id = 0, name = "Godly Keycrate", description = "A guaranteed ice-blue Godly (tier 11) keyboard. The sky beam says it all.", keyboardTier = 11 },
 	} :: { DevProductDef },
 }
 

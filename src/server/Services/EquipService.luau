@@ -14,6 +14,7 @@ local Remotes = require(Shared.Remotes)
 
 local DataService = require(script.Parent.DataService)
 local InventoryService = require(script.Parent.InventoryService)
+local EconomyService = require(script.Parent.EconomyService)
 local KeyboardModel = require(Shared.World.KeyboardModel)
 
 local EquipService = {}
@@ -25,6 +26,10 @@ local typeTokens: { [Player]: { tokens: number, last: number } } = {}
 local equipTokens: { [Player]: { tokens: number, last: number } } = {}
 -- subscribers to accepted typing keypresses (see OnTypeAccepted)
 local typeAcceptedCallbacks: { (Player) -> () } = {}
+-- Typing income accrues here and is flushed through EconomyService.AddMoney
+-- once per GameConfig.TypingIncome.FlushSeconds — AddMoney runs a full
+-- DataSync, which must not happen 10x/second under the type rate limit.
+local pendingTypeEarnings: { [Player]: number } = {}
 
 local rng = Random.new()
 
@@ -219,8 +224,34 @@ local function onTypeKeyRequest(player: Player)
 		end
 	end
 
+	-- Typing income: each accepted keypress on the equipped board pays a
+	-- fraction of its live sell value. The client gets the per-press amount
+	-- immediately (popup); the money itself lands on the next flush.
+	local payout = math.floor(
+		Catalog.GetSellValue(
+			instance.id,
+			profile.upgrades.factoryTier,
+			instance.mutation,
+			profile.rebirths,
+			instance.stars,
+			instance.ageSeconds
+		) * GameConfig.TypingIncome.ValueFraction
+	)
+	if payout > 0 then
+		pendingTypeEarnings[player] = (pendingTypeEarnings[player] or 0) + payout
+		Remotes.TypeReward:FireClient(player, payout)
+	end
+
 	for _, callback in typeAcceptedCallbacks do
 		task.spawn(callback, player)
+	end
+end
+
+local function flushTypeEarnings(player: Player)
+	local amount = pendingTypeEarnings[player]
+	if amount ~= nil and amount > 0 then
+		pendingTypeEarnings[player] = nil
+		EconomyService.AddMoney(player, amount)
 	end
 end
 
@@ -250,6 +281,7 @@ function EquipService.Start()
 	end)
 
 	Players.PlayerRemoving:Connect(function(player)
+		flushTypeEarnings(player) -- bank what they typed before the profile saves
 		destroyHeld(player)
 		local conn = characterConns[player]
 		if conn then
@@ -258,6 +290,15 @@ function EquipService.Start()
 		end
 		typeTokens[player] = nil
 		equipTokens[player] = nil
+	end)
+
+	task.spawn(function()
+		while true do
+			task.wait(GameConfig.TypingIncome.FlushSeconds)
+			for _, player in Players:GetPlayers() do
+				flushTypeEarnings(player)
+			end
+		end
 	end)
 end
 

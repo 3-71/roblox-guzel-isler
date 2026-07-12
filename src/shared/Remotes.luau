@@ -41,6 +41,7 @@ local REMOTE_NAMES = {
 	-- phase 4
 	"VaultRequest", -- client -> server: (uid: string, locked: boolean) toggle sell/gift/fuse protection on an owned instance
 	"FuseRequest", -- client -> server: keyboardId string — server picks the 3 cheapest unlocked/unequipped/undisplayed duplicates of that id and fuses them into one starred instance
+	"TypeReward", -- server -> client: (amount: number) money earned by one accepted keypress on the equipped keyboard
 }
 
 local Remotes = {}
