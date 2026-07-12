@@ -319,7 +319,7 @@ local function buildFactory(plot: Model, origin: CFrame)
 	-- A huge tilted keyboard deck crowns the building so the factory reads as
 	-- a keyboard factory from anywhere on the map. Climbable on purpose.
 	local deckCF = origin * CFrame.new(0, 18.2, 44) * CFrame.Angles(math.rad(-8), 0, 0)
-	part("RoofKeyboardDeck", Vector3.new(42, 2, 19), deckCF, Color3.fromRGB(64, 68, 82), factory)
+	part("RoofKeyboardDeck", Vector3.new(42, 2, 19), deckCF, Color3.fromRGB(64, 68, 82), nil, factory)
 	local roofKeycapColors = {
 		Color3.fromRGB(255, 196, 116),
 		Color3.fromRGB(150, 206, 255),
@@ -358,10 +358,10 @@ local function buildFactory(plot: Model, origin: CFrame)
 		end
 	end
 	-- Giant spacebar under the letter rows.
-	part("RoofSpacebar", Vector3.new(28, 1.8, 4.2), deckCF * CFrame.new(0, 1.9, 8.2), Color3.fromRGB(236, 232, 224), factory)
+	part("RoofSpacebar", Vector3.new(28, 1.8, 4.2), deckCF * CFrame.new(0, 1.9, 8.2), Color3.fromRGB(236, 232, 224), nil, factory)
 
 	-- ===== Giant ENTER key marks the conveyor mouth =====
-	local enterKey = part("EnterKey", Vector3.new(12, 5, 2.6), origin * CFrame.new(0, 13.4, 31.6), Color3.fromRGB(150, 206, 255), factory)
+	local enterKey = part("EnterKey", Vector3.new(12, 5, 2.6), origin * CFrame.new(0, 13.4, 31.6), Color3.fromRGB(150, 206, 255), nil, factory)
 	local enterGui = Instance.new("SurfaceGui")
 	enterGui.Face = Enum.NormalId.Front
 	enterGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
@@ -379,7 +379,7 @@ local function buildFactory(plot: Model, origin: CFrame)
 
 	-- Keycap-framed windows on the side walls (warm neon behind a cap frame).
 	for _, side in { -1, 1 } do
-		part("WindowFrame", Vector3.new(2.6, 5.2, 5.2), origin * CFrame.new(side * 25, 9, 40), Color3.fromRGB(236, 232, 224), factory)
+		part("WindowFrame", Vector3.new(2.6, 5.2, 5.2), origin * CFrame.new(side * 25, 9, 40), Color3.fromRGB(236, 232, 224), nil, factory)
 		local window = part("FactoryWindow", Vector3.new(2.8, 4, 4), origin * CFrame.new(side * 25, 9, 40), PALETTE.window, Enum.Material.Neon, factory)
 		window.CanCollide = false
 	end
