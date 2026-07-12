@@ -8,6 +8,8 @@ local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local MarketplaceService = game:GetService("MarketplaceService")
+local UserInputService = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("Config"):WaitForChild("GameConfig"))
@@ -16,10 +18,13 @@ local Keyboards = require(Shared:WaitForChild("Config"):WaitForChild("Keyboards"
 local Events = require(Shared:WaitForChild("Config"):WaitForChild("Events"))
 local Products = require(Shared:WaitForChild("Config"):WaitForChild("Products"))
 local IndexRewards = require(Shared:WaitForChild("Config"):WaitForChild("IndexRewards"))
+local RestockShop = require(Shared:WaitForChild("Config"):WaitForChild("RestockShop"))
+local FactoryTiers = require(Shared:WaitForChild("Config"):WaitForChild("FactoryTiers"))
 local Catalog = require(Shared:WaitForChild("Catalog"))
 local RollLogic = require(Shared:WaitForChild("RollLogic"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
 local Types = require(Shared:WaitForChild("Types"))
+local KeyboardModel = require(Shared:WaitForChild("World"):WaitForChild("KeyboardModel"))
 
 local SoundController = require(script.Parent.SoundController)
 
@@ -38,6 +43,30 @@ local BAD = Color3.fromRGB(240, 95, 95)
 local profile: Types.Profile? = nil
 local screenGui: ScreenGui
 local openPanelName: string? = nil
+
+-- Remote payload shapes (documented in Shared/Remotes.luau header)
+type SellReportPayload = {
+	count: number,
+	total: number,
+	bestId: string?,
+	bestValue: number,
+	mutationBonus: number,
+}
+type RestockSlotPayload = { offerId: string, stockLeft: number, price: number }
+type RestockPayload = { restockAt: number, slots: { RestockSlotPayload } }
+type GlobalRollPayload = {
+	playerName: string,
+	keyboardId: string,
+	mutation: string?,
+	rarityTier: number,
+	plotIndex: number?,
+	oddsDenominator: number,
+}
+
+local restockOfferById: { [string]: typeof(RestockShop[1]) } = {}
+for _, offer in RestockShop do
+	restockOfferById[offer.id] = offer
+end
 
 -- ===== tiny UI helpers =====
 
@@ -137,6 +166,12 @@ end
 
 local moneyLabel: TextLabel
 local shownMoney = 0
+-- Every count-up animation claims a fresh token; stale loops bail out so the
+-- sell ceremony can take over the label mid-animation.
+local moneyAnimToken = 0
+-- Armed when the client fires a SellRequest: the generic green floater is
+-- suppressed because the SellReport ceremony owns the presentation.
+local expectSellReportUntil = 0
 
 local function buildMoneyHud()
 	local hud = mkFrame(screenGui, {
@@ -157,12 +192,16 @@ local function buildMoneyHud()
 	})
 end
 
+local function setMoneyText(value: number)
+	moneyLabel.Text = "$" .. abbreviate(value)
+end
+
 local function animateMoney(target: number)
 	local from = shownMoney
 	if from == target then
 		return
 	end
-	if target > from then
+	if target > from and os.clock() >= expectSellReportUntil then
 		-- little green +$X floater
 		local floater = mkText(screenGui, {
 			AnchorPoint = Vector2.new(0.5, 0),
@@ -180,16 +219,107 @@ local function animateMoney(target: number)
 		end)
 	end
 	shownMoney = target
+	moneyAnimToken += 1
+	local token = moneyAnimToken
 	task.spawn(function()
 		local start = os.clock()
 		local duration = 0.5
 		while os.clock() - start < duration do
+			if token ~= moneyAnimToken then
+				return -- a newer animation (e.g. the sell ceremony) took over
+			end
 			local alpha = (os.clock() - start) / duration
-			moneyLabel.Text = "$" .. abbreviate(from + (target - from) * alpha)
+			setMoneyText(from + (target - from) * alpha)
 			task.wait()
 		end
-		moneyLabel.Text = "$" .. abbreviate(target)
+		if token == moneyAnimToken then
+			setMoneyText(target)
+		end
 	end)
+end
+
+-- ===== sell ceremony (SellReport remote) =====
+
+local function showSellCeremony(payload: SellReportPayload)
+	local total = payload.total
+	if typeof(total) ~= "number" or total <= 0 then
+		return
+	end
+	-- DataSync (fired inside AddMoney) lands just before SellReport, so the
+	-- profile already holds the post-sale balance: recount from pre-sale.
+	local target = if profile then profile.money else shownMoney
+	local from = math.max(target - total, 0)
+	shownMoney = target
+	moneyAnimToken += 1
+	local token = moneyAnimToken
+
+	-- Count-up duration grows with the size of the payday (log10), 0.8..1.5s.
+	local duration = math.clamp(0.8 + 0.12 * math.log10(math.max(total, 1)), 0.8, 1.5)
+	task.spawn(function()
+		local start = os.clock()
+		local lastTick = 0
+		while os.clock() - start < duration do
+			if token ~= moneyAnimToken then
+				return
+			end
+			local alpha = (os.clock() - start) / duration
+			setMoneyText(from + (target - from) * alpha)
+			if os.clock() - lastTick >= 0.04 then
+				lastTick = os.clock()
+				SoundController.PlaySellTick(alpha)
+			end
+			task.wait()
+		end
+		if token == moneyAnimToken then
+			setMoneyText(target)
+		end
+	end)
+
+	-- floating "+$X" under the HUD
+	local floater = mkText(screenGui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 60),
+		Size = UDim2.fromOffset(240, 34),
+		Text = "+$" .. abbreviate(total),
+		TextColor3 = GOOD,
+	})
+	TweenService:Create(floater, TweenInfo.new(duration + 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.new(0.5, 0, 0, 104),
+		TextTransparency = 1,
+	}):Play()
+	task.delay(duration + 0.6, function()
+		floater:Destroy()
+	end)
+
+	-- Mutations earned extra: a second gold line lands after a short beat,
+	-- with a louder rising sting.
+	local mutationBonus = payload.mutationBonus
+	if typeof(mutationBonus) == "number" and mutationBonus > 0 then
+		task.delay(0.3, function()
+			SoundController.PlayRevealArpeggio(3)
+			local goldLine = mkText(screenGui, {
+				AnchorPoint = Vector2.new(0.5, 0),
+				Position = UDim2.new(0.5, 0, 0, 96),
+				Size = UDim2.fromOffset(280, 30),
+				Text = "MUTATIONS +$" .. abbreviate(mutationBonus),
+				TextColor3 = ACCENT,
+			})
+			TweenService:Create(goldLine, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.new(0.5, 0, 0, 140),
+				TextTransparency = 1,
+			}):Play()
+			task.delay(1.5, function()
+				goldLine:Destroy()
+			end)
+		end)
+	end
+end
+
+-- All client sell requests funnel through here so the money HUD knows a
+-- SellReport ceremony is about to own the count-up presentation.
+local function requestSell(mode: string, payloadArg: any)
+	expectSellReportUntil = os.clock() + 2
+	Remotes.SellRequest:FireServer(mode, payloadArg)
 end
 
 -- ===== boost timer pills (under the money HUD) =====
@@ -369,6 +499,84 @@ local function closeActionOverlay()
 	end
 end
 
+-- Simple gift picker: one name button per OTHER player in the server.
+-- Picking someone fires GiftRequest(targetUserId, uid) — server validates.
+local function openGiftPicker(instance: Types.KeyboardInstance, defName: string, accent: Color3)
+	closeActionOverlay()
+	local panel = panels.inventory
+	local overlay = mkFrame(panel, {
+		Name = "ActionOverlay",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.new(1, -40, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = PANEL_BG2,
+		ZIndex = 5,
+	})
+	corner(overlay, 12)
+	stroke(overlay, accent, 2)
+	actionOverlay = overlay
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 8)
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = overlay
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 10)
+	pad.PaddingBottom = UDim.new(0, 10)
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.Parent = overlay
+
+	local title = mkText(overlay, {
+		Size = UDim2.new(1, 0, 0, 28),
+		Text = `Gift {defName} to…`,
+		TextColor3 = accent,
+		LayoutOrder = 1,
+	})
+	title.ZIndex = 6
+
+	local order = 2
+	local others = 0
+	for _, other in Players:GetPlayers() do
+		if other == localPlayer then
+			continue
+		end
+		others += 1
+		local b = mkButton(overlay, {
+			Size = UDim2.new(1, 0, 0, 40),
+			Text = "🎁 " .. other.Name,
+			BackgroundColor3 = PANEL_BG,
+			LayoutOrder = order,
+		}, function()
+			Remotes.GiftRequest:FireServer(other.UserId, instance.uid)
+			closeActionOverlay()
+		end)
+		b.ZIndex = 6
+		corner(b, 10)
+		order += 1
+	end
+	if others == 0 then
+		local none = mkText(overlay, {
+			Size = UDim2.new(1, 0, 0, 24),
+			Text = "No other players in the server.",
+			TextColor3 = TEXT_DIM,
+			LayoutOrder = order,
+		})
+		none.ZIndex = 6
+		order += 1
+	end
+	local cancel = mkButton(overlay, {
+		Size = UDim2.new(1, 0, 0, 36),
+		Text = "Cancel",
+		BackgroundColor3 = PANEL_BG,
+		LayoutOrder = order,
+	}, closeActionOverlay)
+	cancel.ZIndex = 6
+	corner(cancel, 10)
+end
+
 local function openActionOverlay(instance: Types.KeyboardInstance)
 	closeActionOverlay()
 	local p = profile
@@ -485,12 +693,24 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 		end
 	end
 
+	-- Gift: only when this instance is free (not equipped/displayed) and
+	-- there is somebody else in the server to receive it.
+	local othersInServer = #Players:GetPlayers() > 1
+	local canGift = not equipped and standIndex == nil and othersInServer
+	local giftLabel = if canGift
+		then "Gift to a player"
+		elseif not othersInServer then "Gift (no one else here)"
+		else "Gift (unequip/undisplay first)"
+	actionButton(5, giftLabel, Color3.fromRGB(120, 200, 255), canGift, function()
+		openGiftPicker(instance, def.name, rarity.color)
+	end)
+
 	local canSell = not equipped and standIndex == nil
-	actionButton(5, if canSell then "Sell" else "Sell (unequip/undisplay first)", BAD, canSell, function()
-		Remotes.SellRequest:FireServer("uids", { instance.uid })
+	actionButton(6, if canSell then "Sell" else "Sell (unequip/undisplay first)", BAD, canSell, function()
+		requestSell("uids", { instance.uid })
 		closeActionOverlay()
 	end)
-	actionButton(6, "Cancel", PANEL_BG, true, closeActionOverlay)
+	actionButton(7, "Cancel", PANEL_BG, true, closeActionOverlay)
 end
 
 local function renderInventory()
@@ -639,7 +859,7 @@ local function buildInventoryPanel()
 		Text = "Sell all",
 	}, function()
 		if bulkArmed then
-			Remotes.SellRequest:FireServer("belowTier", bulkTier)
+			requestSell("belowTier", bulkTier)
 			bulkArmed = false
 		else
 			local count, total = bulkPreview()
@@ -859,7 +1079,8 @@ local function renderOdds()
 			end
 		end
 	end
-	local odds = RollLogic.GetOdds(p.upgrades.factoryTier, RollLogic.GetEffectiveLuck(p, os.time(), eventLuck))
+	local pityCount = p.pity or 0
+	local odds = RollLogic.GetOdds(p.upgrades.factoryTier, RollLogic.GetEffectiveLuck(p, os.time(), eventLuck), pityCount)
 	for tier = 1, #Rarities do
 		local rarity = Rarities[tier]
 		local chance = odds[tier]
@@ -900,10 +1121,56 @@ local function renderOdds()
 			TextXAlignment = Enum.TextXAlignment.Right,
 		})
 	end
+
+	-- Thock Meter: the disclosed bad-luck-protection meter (GameConfig.Pity).
+	local pity = GameConfig.Pity
+	local targetRarity = Rarities[pity.TargetTier]
+	local ft = Catalog.GetFactoryTier(p.upgrades.factoryTier)
+	local ceilingBelowTarget = ft ~= nil and ft.maxRarity < pity.TargetTier
+	local meter = mkFrame(oddsContent, {
+		Position = UDim2.fromOffset(0, #Rarities * 32 + 6),
+		Size = UDim2.new(1, 0, 0, 74),
+		BackgroundTransparency = 1,
+	})
+	mkText(meter, {
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = `Pity: {math.min(pityCount, pity.HardGuarantee)}/{pity.HardGuarantee} — {targetRarity.name}+ guaranteed at {pity.HardGuarantee}`,
+		TextScaled = false,
+		TextSize = 15,
+		TextColor3 = targetRarity.color,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+	local meterBg = mkFrame(meter, {
+		Position = UDim2.fromOffset(0, 24),
+		Size = UDim2.new(1, 0, 0, 14),
+		BackgroundColor3 = Color3.fromRGB(28, 30, 36),
+	})
+	corner(meterBg, 7)
+	local fillFrac = math.clamp(pityCount / pity.HardGuarantee, 0, 1)
+	if fillFrac > 0 then
+		local fill = mkFrame(meterBg, {
+			Size = UDim2.new(fillFrac, 0, 1, 0),
+			BackgroundColor3 = if pityCount >= pity.HardGuarantee then GOOD else targetRarity.color,
+		})
+		corner(fill, 7)
+	end
+	mkText(meter, {
+		Position = UDim2.fromOffset(0, 42),
+		Size = UDim2.new(1, 0, 0, 30),
+		Text = if ceilingBelowTarget
+			then `The meter fills once your factory can roll {targetRarity.name} — upgrade the factory!`
+			else `Every roll below {targetRarity.name} fills the meter and gently boosts these odds; a {targetRarity.name}+ roll resets it.`,
+		TextScaled = false,
+		TextSize = 12,
+		TextWrapped = true,
+		TextColor3 = TEXT_DIM,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	})
 end
 
 local function buildOddsPanel()
-	local panel, content = mkPanel("odds", "🎲 Roll Odds", UDim2.fromOffset(380, 480))
+	local panel, content = mkPanel("odds", "🎲 Roll Odds", UDim2.fromOffset(380, 560))
 	oddsContent = content
 	mkText(panel, {
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -1114,19 +1381,154 @@ local function buildShopPanel()
 	renderers.shop = renderShop
 end
 
+-- ===== restock stall panel (hub Limited Crates, RestockSync remote) =====
+
+local restockContent: Frame
+local restockCountdown: TextLabel
+local latestRestock: RestockPayload? = nil
+
+local function renderRestock()
+	for _, child in restockContent:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+	local sync = latestRestock
+	if sync == nil then
+		local waiting = mkFrame(restockContent, {
+			Position = UDim2.fromOffset(0, 34),
+			Size = UDim2.new(1, 0, 0, 40),
+			BackgroundTransparency = 1,
+		})
+		mkText(waiting, {
+			Size = UDim2.fromScale(1, 1),
+			Text = "Waiting for the stall to sync…",
+			TextColor3 = TEXT_DIM,
+		})
+		return
+	end
+	local p = profile
+	local factoryTier = if p then math.clamp(p.upgrades.factoryTier, 1, #FactoryTiers) else 1
+
+	local y = 34
+	for slotIndex, slot in sync.slots do
+		local offer = restockOfferById[slot.offerId]
+		if offer == nil or typeof(slot.stockLeft) ~= "number" or typeof(slot.price) ~= "number" then
+			continue
+		end
+		-- Contract: the charge is the offer's base cost * buyer's factory tier.
+		local price = math.floor(slot.price * factoryTier)
+		local soldOut = slot.stockLeft <= 0
+		local rare = offer.weight <= 3
+		local row = mkFrame(restockContent, {
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, 0, 0, 92),
+			BackgroundColor3 = PANEL_BG2,
+			BackgroundTransparency = if soldOut then 0.55 else 0,
+		})
+		corner(row, 10)
+		if rare and not soldOut then
+			stroke(row, ACCENT, 2)
+		end
+		mkText(row, {
+			Position = UDim2.fromOffset(10, 6),
+			Size = UDim2.new(1, -130, 0, 24),
+			Text = offer.name,
+			TextColor3 = if soldOut then TEXT_DIM elseif rare then ACCENT else TEXT_MAIN,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		mkText(row, {
+			Position = UDim2.fromOffset(10, 34),
+			Size = UDim2.new(1, -130, 0, 32),
+			Text = offer.description,
+			TextScaled = false,
+			TextSize = 13,
+			TextWrapped = true,
+			TextColor3 = TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+		})
+		mkText(row, {
+			Position = UDim2.fromOffset(10, 68),
+			Size = UDim2.new(1, -130, 0, 18),
+			Text = if soldOut then "SOLD OUT" else `{slot.stockLeft} left this restock`,
+			TextScaled = false,
+			TextSize = 13,
+			TextColor3 = if soldOut then BAD else GOOD,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		local buy = mkButton(row, {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -8, 0.5, 0),
+			Size = UDim2.fromOffset(104, 44),
+			Text = if soldOut then "SOLD OUT" else "$" .. abbreviate(price),
+			TextScaled = false,
+			TextSize = 16,
+			BackgroundColor3 = if soldOut then PANEL_BG else GOOD,
+			TextColor3 = if soldOut then TEXT_DIM else Color3.new(0.1, 0.1, 0.12),
+			Active = not soldOut,
+			AutoButtonColor = not soldOut,
+		}, function()
+			if not soldOut then
+				Remotes.BuyRestockItem:FireServer(slotIndex)
+			end
+		end)
+		corner(buy, 10)
+		y += 100
+	end
+
+	local note = mkFrame(restockContent, {
+		Position = UDim2.fromOffset(0, y),
+		Size = UDim2.new(1, 0, 0, 18),
+		BackgroundTransparency = 1,
+	})
+	mkText(note, {
+		Size = UDim2.fromScale(1, 1),
+		Text = `Prices scale with your factory tier (x{factoryTier})`,
+		TextScaled = false,
+		TextSize = 12,
+		TextColor3 = TEXT_DIM,
+	})
+end
+
+local function buildRestockPanel()
+	local _panel, content = mkPanel("restock", "🎁 Limited Crates", UDim2.fromOffset(400, 470))
+	restockContent = content
+	restockCountdown = mkText(content, {
+		Name = "Countdown",
+		Size = UDim2.new(1, 0, 0, 26),
+		Text = "Restock in --:--",
+		TextColor3 = ACCENT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+	-- Live "Restock in m:ss" off the wall-clock restockAt the server synced;
+	-- the flip itself arrives as a fresh RestockSync from the server.
+	task.spawn(function()
+		while true do
+			local sync = latestRestock
+			if sync ~= nil then
+				local remaining = sync.restockAt - os.time()
+				restockCountdown.Text = if remaining > 0 then `Restock in {formatClock(remaining)}` else "Restocking…"
+			end
+			task.wait(1)
+		end
+	end)
+	renderers.restock = renderRestock
+end
+
 -- ===== button rail =====
 
 local function buildRail()
 	local rail = mkFrame(screenGui, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(60, 5 * 66),
+		Size = UDim2.fromOffset(60, 6 * 66),
 		BackgroundTransparency = 1,
 	})
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = rail
-	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" } } do
+	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" }, { "restock", "🎁" } } do
 		local b = mkButton(rail, {
 			Size = UDim2.fromOffset(56, 56),
 			Text = entry[2],
@@ -1204,11 +1606,75 @@ local function toast(kind: string, message: string)
 	end)
 end
 
+-- Top-center marquee banner for GlobalRoll spectacles (other players' huge
+-- rolls), styled like the flex toast. One at a time; the newest wins.
+local activeMarquee: Frame? = nil
+
+local function marqueeToast(message: string, color: Color3)
+	if activeMarquee then
+		activeMarquee:Destroy()
+		activeMarquee = nil
+	end
+	-- Very dark rarity colors (Secret) get lifted so they read on the banner.
+	local textColor = if color.R + color.G + color.B < 0.6 then color:Lerp(Color3.new(1, 1, 1), 0.6) else color
+	local banner = mkFrame(screenGui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, -56),
+		Size = UDim2.fromOffset(580, 44),
+		BackgroundColor3 = Color3.fromRGB(80, 65, 20),
+		BackgroundTransparency = 0.08,
+		ZIndex = 9,
+	})
+	corner(banner, 12)
+	stroke(banner, ACCENT, 2)
+	local lbl = mkText(banner, {
+		Size = UDim2.new(1, -20, 1, -10),
+		Position = UDim2.fromOffset(10, 5),
+		Text = "✨ " .. message,
+		TextColor3 = textColor,
+	})
+	lbl.ZIndex = 9
+	activeMarquee = banner
+	TweenService:Create(banner, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Position = UDim2.new(0.5, 0, 0, 96),
+	}):Play()
+	task.delay(4.5, function()
+		if banner.Parent == nil then
+			return
+		end
+		TweenService:Create(banner, TweenInfo.new(0.3), { Position = UDim2.new(0.5, 0, 0, -56) }):Play()
+		task.delay(0.35, function()
+			if activeMarquee == banner then
+				activeMarquee = nil
+			end
+			banner:Destroy()
+		end)
+	end)
+end
+
 -- ===== celebration overlay =====
 
 local celebrationQueue: { Types.CollectedPayload } = {}
 local celebrating = false
 
+-- Reveal-hold seconds by rarity tier: the highest threshold <= tier wins.
+local CEREMONY_HOLD: { [number]: number } = { [1] = 0.9, [9] = 2.2, [11] = 4 }
+
+local function ceremonyHoldFor(tier: number): number
+	local bestThreshold, hold = 0, 0.9
+	for threshold, seconds in CEREMONY_HOLD do
+		if tier >= threshold and threshold > bestThreshold then
+			bestThreshold = threshold
+			hold = seconds
+		end
+	end
+	return hold
+end
+
+-- The roll ceremony: slot-machine anticipation (decelerating name wheel in
+-- rarity colors), a freeze + stroke-pulse + white-flash tell on tier 9+, then
+-- the reveal card with the actual keyboard spinning in a ViewportFrame. Any
+-- tap/click/keypress during the ceremony skips straight to the reveal.
 local function showCelebration(payload: Types.CollectedPayload)
 	local def = Catalog.GetKeyboard(payload.keyboardId)
 	local rarity = def and Catalog.GetRarity(def.rarityTier)
@@ -1218,6 +1684,17 @@ local function showCelebration(payload: Types.CollectedPayload)
 	local mutationDef = Catalog.GetMutation(payload.mutation)
 	local titleText = if mutationDef then `{string.upper(mutationDef.name)} {def.name}!` else def.name
 	local titleColor = if mutationDef then mutationDef.tint else rarity.color
+
+	local skipped = false
+	local inputConn = UserInputService.InputBegan:Connect(function(input, _gameProcessed)
+		if input.UserInputType == Enum.UserInputType.Keyboard
+			or input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
+			skipped = true
+		end
+	end)
+	local spinConn: RBXScriptConnection? = nil
 
 	local dim = mkFrame(screenGui, {
 		Size = UDim2.fromScale(1, 1),
@@ -1235,34 +1712,161 @@ local function showCelebration(payload: Types.CollectedPayload)
 		ZIndex = 11,
 	})
 	corner(card, 16)
-	stroke(card, rarity.color, 3)
+	local cardStroke = stroke(card, rarity.color, 3)
 	TweenService:Create(card, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-		Size = UDim2.fromOffset(340, 170),
+		Size = UDim2.fromOffset(360, 300),
 	}):Play()
 
-	task.delay(0.18, function()
+	local topLabel = mkText(card, {
+		Size = UDim2.new(1, -20, 0, 26),
+		Position = UDim2.fromOffset(10, 10),
+		Text = "ROLLING…",
+		TextColor3 = TEXT_DIM,
+		ZIndex = 12,
+	})
+	local wheel = mkText(card, {
+		Size = UDim2.new(1, -20, 0, 60),
+		Position = UDim2.fromOffset(10, 110),
+		Text = "",
+		ZIndex = 12,
+	})
+	local skipHint = mkText(card, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -8),
+		Size = UDim2.new(1, -20, 0, 16),
+		Text = "tap to skip",
+		TextScaled = false,
+		TextSize = 13,
+		TextColor3 = TEXT_DIM,
+		ZIndex = 12,
+	})
+
+	task.wait(0.25) -- let the card pop in
+
+	-- Anticipation: rapid random keyboard names in their rarity colors,
+	-- decelerating tick by tick (0.05 * 1.18^i).
+	local wheelRng = Random.new()
+	for i = 0, 11 do
+		if skipped then
+			break
+		end
+		local pick = Keyboards[wheelRng:NextInteger(1, #Keyboards)]
+		local pickRarity = Catalog.GetRarity(pick.rarityTier)
+		wheel.Text = pick.name
+		wheel.TextColor3 = if pickRarity then pickRarity.color else TEXT_MAIN
+		SoundController.PlaySlotTick(i)
+		task.wait(0.05 * 1.18 ^ i)
+	end
+
+	-- Tier 9+ tell: the wheel freezes, the stroke pulses, then a white flash
+	-- washes the screen right before the reveal.
+	if def.rarityTier >= 9 and not skipped then
+		TweenService:Create(
+			cardStroke,
+			TweenInfo.new(0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 2, true),
+			{ Thickness = 6, Transparency = 0.25 }
+		):Play()
+		task.wait(0.45)
+		local flash = mkFrame(dim, {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 1,
+			ZIndex = 15,
+		})
+		TweenService:Create(flash, TweenInfo.new(0.08), { BackgroundTransparency = 0.1 }):Play()
+		task.wait(0.1)
+		TweenService:Create(flash, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+		task.delay(0.35, function()
+			flash:Destroy()
+		end)
+	end
+
+	-- ===== reveal =====
+	wheel:Destroy()
+	skipHint:Destroy()
+	topLabel.Text = "NEW ROLL!"
+	SoundController.PlayRevealArpeggio(def.rarityTier)
+	task.delay(0.4, function()
+		SoundController.PlayKeyboard(payload.keyboardId, nil, payload.mutation)
+	end)
+
+	-- The actual keyboard, built client-side and slowly spun in a viewport.
+	local viewport = Instance.new("ViewportFrame")
+	viewport.BackgroundTransparency = 1
+	viewport.Position = UDim2.fromOffset(10, 40)
+	viewport.Size = UDim2.new(1, -20, 0, 130)
+	viewport.Ambient = rarity.color
+	viewport.LightColor = Color3.new(1, 1, 1)
+	viewport.LightDirection = Vector3.new(-1, -2, -1)
+	viewport.ZIndex = 12
+	viewport.Parent = card
+	local worldModel = Instance.new("WorldModel")
+	worldModel.Parent = viewport
+	local model = KeyboardModel.Build(def, 1, mutationDef)
+	model:PivotTo(CFrame.new())
+	model.Parent = worldModel
+	local camera = Instance.new("Camera")
+	camera.CFrame = CFrame.lookAt(Vector3.new(3.4, 2.8, -3.8), Vector3.zero) -- 3/4 front view
+	camera.Parent = viewport
+	viewport.CurrentCamera = camera
+	local spinAngle = 0
+	spinConn = RunService.Heartbeat:Connect(function(dt)
+		spinAngle += dt * 0.7
+		model:PivotTo(CFrame.Angles(0, spinAngle, 0))
+	end)
+
+	mkText(card, {
+		Size = UDim2.new(1, -20, 0, 46),
+		Position = UDim2.fromOffset(10, 172),
+		Text = titleText,
+		TextColor3 = titleColor,
+		ZIndex = 12,
+	})
+	mkText(card, {
+		Size = UDim2.new(1, -20, 0, 24),
+		Position = UDim2.fromOffset(10, 220),
+		Text = rarity.name,
+		TextColor3 = rarity.color,
+		ZIndex = 12,
+	})
+
+	local p = profile
+	if p then
+		local discovered = 0
+		for _, kbDef in Keyboards do
+			if (p.collection[kbDef.id] or 0) > 0 then
+				discovered += 1
+			end
+		end
 		mkText(card, {
-			Size = UDim2.new(1, -20, 0, 40),
-			Position = UDim2.fromOffset(10, 14),
-			Text = "NEW ROLL!",
+			Size = UDim2.new(1, -20, 0, 20),
+			Position = UDim2.fromOffset(10, 248),
+			Text = `{discovered}/{#Keyboards} collected`,
 			TextColor3 = TEXT_DIM,
 			ZIndex = 12,
 		})
-		mkText(card, {
-			Size = UDim2.new(1, -20, 0, 56),
-			Position = UDim2.fromOffset(10, 56),
-			Text = titleText,
-			TextColor3 = titleColor,
-			ZIndex = 12,
-		})
-		mkText(card, {
-			Size = UDim2.new(1, -20, 0, 30),
-			Position = UDim2.fromOffset(10, 118),
-			Text = rarity.name,
-			TextColor3 = rarity.color,
-			ZIndex = 12,
-		})
-	end)
+		if p.collection[def.id] == 1 then
+			-- first one ever: scale-bounce "NEW!" badge
+			local badge = mkFrame(card, {
+				AnchorPoint = Vector2.new(1, 0),
+				Position = UDim2.new(1, -10, 0, 8),
+				Size = UDim2.fromOffset(0, 0),
+				BackgroundColor3 = GOOD,
+				Rotation = 8,
+				ZIndex = 13,
+			})
+			corner(badge, 8)
+			mkText(badge, {
+				Size = UDim2.fromScale(1, 1),
+				Text = "NEW!",
+				TextColor3 = Color3.new(0.1, 0.1, 0.12),
+				ZIndex = 14,
+			})
+			TweenService:Create(badge, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+				Size = UDim2.fromOffset(84, 32),
+			}):Play()
+		end
+	end
 
 	-- confetti
 	local rng = Random.new()
@@ -1280,10 +1884,14 @@ local function showCelebration(payload: Types.CollectedPayload)
 		}):Play()
 	end
 
-	task.wait(2.2)
+	task.wait(ceremonyHoldFor(def.rarityTier))
+	inputConn:Disconnect()
 	TweenService:Create(dim, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
 	TweenService:Create(card, TweenInfo.new(0.25), { Size = UDim2.fromOffset(0, 0) }):Play()
 	task.wait(0.3)
+	if spinConn then
+		spinConn:Disconnect()
+	end
 	dim:Destroy()
 end
 
@@ -1295,8 +1903,24 @@ local function queueCelebration(payload: Types.CollectedPayload)
 	celebrating = true
 	task.spawn(function()
 		while #celebrationQueue > 0 do
-			local next = table.remove(celebrationQueue, 1) :: Types.CollectedPayload
-			showCelebration(next)
+			if #celebrationQueue > 2 then
+				-- Queue collapse: play only the highest-tier roll in full and
+				-- fold the rest into a single summary toast.
+				local bestIndex = 1
+				for index = 2, #celebrationQueue do
+					if celebrationQueue[index].rarityTier > celebrationQueue[bestIndex].rarityTier then
+						bestIndex = index
+					end
+				end
+				local best = table.remove(celebrationQueue, bestIndex) :: Types.CollectedPayload
+				local folded = #celebrationQueue
+				table.clear(celebrationQueue)
+				toast("info", `✨ +{folded} more keyboards collected while celebrating`)
+				showCelebration(best)
+			else
+				local nextPayload = table.remove(celebrationQueue, 1) :: Types.CollectedPayload
+				showCelebration(nextPayload)
+			end
 		end
 		celebrating = false
 	end)
@@ -1425,6 +2049,7 @@ function UIController.Start()
 	buildOddsPanel()
 	buildRebirthPanel()
 	buildShopPanel()
+	buildRestockPanel()
 	buildRail()
 	buildToasts()
 	watchSellZone()
@@ -1448,6 +2073,52 @@ function UIController.Start()
 		if payload.rarityTier >= GameConfig.CelebrateMinTier or payload.mutation ~= nil then
 			queueCelebration(payload)
 		end
+	end)
+
+	Remotes.SellReport.OnClientEvent:Connect(function(payload: SellReportPayload)
+		if typeof(payload) == "table" then
+			showSellCeremony(payload)
+		end
+	end)
+
+	Remotes.RestockSync.OnClientEvent:Connect(function(payload: RestockPayload)
+		if typeof(payload) ~= "table" or typeof(payload.restockAt) ~= "number" or typeof(payload.slots) ~= "table" then
+			return
+		end
+		latestRestock = payload
+		if openPanelName == "restock" then
+			renderRestock()
+		end
+	end)
+
+	-- Other players' spectacle rolls: marquee banner + rarity-colored chat
+	-- line. Own rolls are skipped — they already get the full ceremony.
+	Remotes.GlobalRoll.OnClientEvent:Connect(function(payload: GlobalRollPayload)
+		if typeof(payload) ~= "table"
+			or typeof(payload.playerName) ~= "string"
+			or typeof(payload.keyboardId) ~= "string"
+		then
+			return
+		end
+		if payload.playerName == localPlayer.Name then
+			return
+		end
+		local def = Catalog.GetKeyboard(payload.keyboardId)
+		local rarity = def and Catalog.GetRarity(def.rarityTier)
+		if not def or not rarity then
+			return
+		end
+		local mutationDef = Catalog.GetMutation(payload.mutation)
+		local what = if mutationDef then `{string.upper(mutationDef.name)} {rarity.name}` else rarity.name
+		local denom = if typeof(payload.oddsDenominator) == "number" then math.max(math.floor(payload.oddsDenominator), 1) else 0
+		local oddsText = if denom > 0 then ` (1 in {comma(denom)})` else ""
+		local message = `{payload.playerName} rolled a {what} {def.name}{oddsText}!`
+		marqueeToast(message, rarity.color)
+		pcall(function()
+			local channels = (TextChatService :: any).TextChannels
+			local general = channels.RBXGeneral
+			general:DisplaySystemMessage(`<font color="#{rarity.color:ToHex()}">{message}</font>`)
+		end)
 	end)
 
 	Remotes.OfflineReport.OnClientEvent:Connect(showOfflineReport)

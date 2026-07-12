@@ -70,16 +70,37 @@ function SoundController.PlayUiClick()
 	Debris:AddItem(sound, 3)
 end
 
-local function playCelebrationSting()
-	for i, speed in { 0.8, 1.0, 1.3 } do
-		task.delay(0.12 * (i - 1), function()
-			local sound = Instance.new("Sound")
-			sound.SoundId = STING_SOUND
-			sound.Volume = 0.7
-			sound.PlaybackSpeed = speed
-			sound.Parent = SoundService
-			sound:Play()
-			Debris:AddItem(sound, 3)
+-- One PING at the given volume/pitch: the building block for the ceremony
+-- sounds below (slot ticks, sell ticks, reveal arpeggio).
+local function playPing(volume: number, playbackSpeed: number)
+	local sound = Instance.new("Sound")
+	sound.SoundId = STING_SOUND
+	sound.Volume = volume
+	sound.PlaybackSpeed = math.max(playbackSpeed, 0.05)
+	sound.Parent = SoundService
+	sound:Play()
+	Debris:AddItem(sound, 3)
+end
+
+-- Ceremony slot-wheel tick: rises one semitone per swap (i = swap index).
+function SoundController.PlaySlotTick(i: number)
+	playPing(0.12, 0.8 * 2 ^ (i / 12))
+end
+
+-- Sell count-up tick: pitch rises with progress (0..1) through the payout.
+function SoundController.PlaySellTick(progress: number)
+	progress = math.clamp(progress, 0, 1)
+	playPing(0.3, 1 + 1.2 * progress)
+end
+
+-- Reveal arpeggio: one rising note per rarity tier (capped at 8), staggered
+-- 0.07s apart, volume ramping 0.4 -> 0.9 into the final note.
+function SoundController.PlayRevealArpeggio(tier: number)
+	local notes = math.clamp(math.floor(tier), 1, 8)
+	for k = 1, notes do
+		local volume = 0.4 + 0.5 * (k - 1) / math.max(notes - 1, 1)
+		task.delay(0.07 * (k - 1), function()
+			playPing(volume, 2 ^ ((k * 3) / 12))
 		end)
 	end
 end
@@ -121,10 +142,14 @@ function SoundController.Start()
 	end)
 
 	Remotes.KeyboardCollected.OnClientEvent:Connect(function(payload: Types.CollectedPayload)
-		SoundController.PlayKeyboard(payload.keyboardId, nil, payload.mutation)
+		-- Ceremony-worthy rolls are scored by the reveal ceremony instead:
+		-- UIController drives PlaySlotTick per wheel swap, PlayRevealArpeggio
+		-- at the reveal, then PlayKeyboard 0.4s later. Everything else gets
+		-- its collect sound immediately.
 		if payload.rarityTier >= GameConfig.CelebrateMinTier or payload.mutation ~= nil then
-			playCelebrationSting()
+			return
 		end
+		SoundController.PlayKeyboard(payload.keyboardId, nil, payload.mutation)
 	end)
 
 	Remotes.SoundPulse.OnClientEvent:Connect(function(originPart: Instance?, keyboardId: string, mutation: string?)
