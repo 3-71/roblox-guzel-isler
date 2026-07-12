@@ -7,6 +7,10 @@ export type KeyboardInstance = {
 	id: string, -- KeyboardDef id from Config/Keyboards
 	obtainedAt: number, -- unix time
 	mutation: string?, -- MutationDef id from Config/Mutations (nil = normal)
+	-- vault: locked instances are excluded from selling/gifting/fusing
+	locked: boolean?,
+	stars: number?, -- fusion stars 1..GameConfig.Fusion.MaxStars (nil = unstarred)
+	ageSeconds: number?, -- display aging accrued on a stand (see GameConfig.Aging)
 }
 
 export type Upgrades = {
@@ -34,7 +38,12 @@ export type Profile = {
 	rebirths: number,
 	-- IndexReward ids already claimed (see Config/IndexRewards)
 	indexClaimed: { [string]: boolean },
+	-- completed collection-set ids, auto-claimed by SetsService (see Config/Sets)
+	setsClaimed: { [string]: boolean },
 	likesReceived: number,
+	-- likes this player GAVE to other farms (drives the Wholesome secret;
+	-- see GameConfig.Secrets)
+	likesGiven: number,
 	-- gamepass key -> owned (cached on join; see Config/Products)
 	passes: { [string]: boolean },
 	-- dev-product boost key -> unix expiry time
@@ -62,6 +71,7 @@ export type CollectedPayload = {
 	rarityTier: number,
 	source: string, -- "belt" | "offline"
 	mutation: string?, -- MutationDef id (nil = normal)
+	stars: number?, -- fusion stars on the new instance (nil = unstarred)
 }
 
 -- OfflineReport remote payload
