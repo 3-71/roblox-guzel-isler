@@ -106,12 +106,22 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 
 	local function placeGrid(baseCF: CFrame, gridW: number, gridCols: number)
 		local pitchX = gridW / gridCols
-		local capW = pitchX * 0.76
+		local capW = pitchX * 0.72
 		for r = 1, rows do
 			local z = areaD / 2 - (r - 0.5) * rowPitch -- back (+Z) to front
+			-- Real keyboards stagger their rows; tiny builds skip it.
+			local stagger = if smallBuild then 0 else (r - (rows + 1) / 2) * pitchX * 0.1
 			for c = 1, gridCols do
-				local x = -gridW / 2 + (c - 0.5) * pitchX
-				placeCap(baseCF, x, z, capW, (r + c) % 5 == 0)
+				local x = -gridW / 2 + (c - 0.5) * pitchX + stagger
+				local isEdge = not smallBuild and (c == 1 or c == gridCols)
+				if isEdge then
+					-- Wider modifier keys (Tab/Shift/Enter feel) on the outside
+					-- columns, nudged outward into the margin.
+					local shift = if c == 1 then -pitchX * 0.08 else pitchX * 0.08
+					placeCap(baseCF, x + shift, z, capW * 1.22, r == 2 and c == gridCols)
+				else
+					placeCap(baseCF, x, z, capW, (r + c) % 5 == 0)
+				end
 			end
 		end
 	end
@@ -138,6 +148,12 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 			body.Transparency = 0.35
 		end
 		local areaW = bodyW - bezel * 2
+
+		-- Dark switch plate under the caps sells keycap depth at a glance.
+		local plateColor = look.bodyColor:Lerp(Color3.new(0, 0, 0), 0.45)
+		local plate = newPart("Part", Vector3.new(areaW + 0.06, 0.03, areaD + 0.06), off(0, bodyH / 2 + 0.015, 0), plateColor)
+		plate.Name = "SwitchPlate"
+
 		placeGrid(CFrame.new(), areaW, cols)
 		-- Spacebar + two flanking accent keys on the front row.
 		local spaceZ = -areaD / 2 + rowPitch * 0.5
@@ -147,6 +163,42 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 	end
 	body.Name = "Body"
 	model.PrimaryPart = body
+
+	-- ===== Detail pass (skipped on tiny builds to protect the part budget) =====
+	if not smallBuild then
+		-- Coiled cable stub out the back.
+		local cableColor = Color3.fromRGB(45, 45, 52)
+		local cable = newPart("Part", Vector3.new(0.12, 0.12, 0.5), off(bodyW * 0.3, 0, bodyD / 2 + 0.24), cableColor)
+		cable.Name = "Cable"
+		local plug = newPart("Part", Vector3.new(0.24, 0.24, 0.24), off(bodyW * 0.3, 0.05, bodyD / 2 + 0.5), cableColor)
+		plug.Name = "CablePlug"
+
+		-- Flip-out feet lift the rear edge.
+		for _, side in { -1, 1 } do
+			local foot = newPart("Part", Vector3.new(0.28, 0.14, 0.2), off(side * (bodyW / 2 - 0.4), -bodyH / 2 - 0.07, bodyD / 2 - 0.25), look.accentColor)
+			foot.Name = "Foot"
+		end
+
+		-- Tiny brand badge on the top-right bezel.
+		local badge = newPart("Part", Vector3.new(0.34, 0.02, 0.12), off(bodyW / 2 - 0.35, bodyH / 2 + 0.01, bodyD / 2 - 0.11), look.accentColor)
+		badge.Name = "Badge"
+
+		-- Retro boards get the little power LED.
+		if style == "retro" then
+			local led = newPart("Part", Vector3.new(0.1, 0.04, 0.1), off(-bodyW / 2 + 0.35, bodyH / 2 + 0.02, bodyD / 2 - 0.11), Color3.fromRGB(255, 70, 70))
+			led.Name = "PowerLED"
+			led.Material = Enum.Material.Neon
+		end
+	end
+
+	-- RGB underglow: glowing rarities and crystal boards float on a light rim.
+	if (glow and rarity ~= nil) or style == "crystal" then
+		local underColor = if glow and rarity ~= nil then rarity.color else look.accentColor
+		local underglow = newPart("Part", Vector3.new(bodyW + 0.12, 0.06, bodyD + 0.12), off(0, -bodyH / 2 - 0.02, 0), underColor)
+		underglow.Name = "Underglow"
+		underglow.Material = Enum.Material.Neon
+		underglow.Transparency = 0.25
+	end
 
 	if style == "retro" then
 		-- Raised rear lip: the classic wedge profile of old boards.
