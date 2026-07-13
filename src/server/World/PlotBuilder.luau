@@ -84,6 +84,7 @@ local PAD_KIND_COLORS: { [string]: Color3 } = {
 	storage = Color3.fromRGB(168, 168, 178), -- grey
 	display = Color3.fromRGB(255, 142, 202), -- pink
 	rebirth = Color3.fromRGB(255, 245, 200), -- radiant white-gold
+	walls = Color3.fromRGB(222, 124, 96), -- brick
 }
 
 local PAD_KIND_ICONS: { [string]: string } = {
@@ -94,7 +95,15 @@ local PAD_KIND_ICONS: { [string]: string } = {
 	storage = "📦",
 	display = "🖼️",
 	rebirth = "🔄",
+	walls = "🧱",
 }
+
+-- Buyable cosmetic walls (pad kind "walls"): WallTier1..4 Models replace the
+-- picket fence; only the highest owned tier is visible (see OnPadPurchased).
+local WALL_TIERS = 4
+-- Rebirth tower: RebirthFloor1..5 storeys stack above the factory, one shown
+-- per rebirth (see SetRebirthFloors).
+local REBIRTH_FLOORS = 5
 
 -- Visibility bookkeeping: original property values are parked in attributes
 -- while hidden so reveals restore exactly what the builder created.
@@ -356,6 +365,200 @@ local function buildFence(plot: Model, origin: CFrame)
 	end
 
 	fence.Parent = plot
+end
+
+-- ===== Buyable walls (WallTier1..4) =====
+-- Each tier is a full fence-line replacement, built hidden; buying walls_N
+-- hides the picket fence + other tiers and reveals tier N (OnPadPurchased).
+-- The gate gap (|x| < 10 at z = -FENCE) stays open on every tier and the
+-- gate arches are deco'd (CanCollide=false) so jumps never bump them.
+
+local function buildWallTier(plot: Model, origin: CFrame, tier: number)
+	local wall = Instance.new("Model")
+	wall.Name = "WallTier" .. tostring(tier)
+
+	local heights = { 4.5, 5.5, 6.5, 8 }
+	local thicknesses = { 0.8, 1.2, 1.0, 1.4 }
+	local bodyColors = { PALETTE.wood, PALETTE.stone, PALETTE.machine, PALETTE.stoneLight }
+	local bodyMaterials: { Enum.Material } = {
+		Enum.Material.WoodPlanks,
+		Enum.Material.Slate,
+		Enum.Material.Metal,
+		Enum.Material.SmoothPlastic,
+	}
+	local trimColors = {
+		PALETTE.fence,
+		PALETTE.stoneLight,
+		Color3.fromRGB(96, 202, 255), -- neon cyan
+		PALETTE.signGold,
+	}
+	local h = heights[tier]
+	local th = thicknesses[tier]
+	local body = bodyColors[tier]
+	local material = bodyMaterials[tier]
+	local trim = trimColors[tier]
+
+	-- Five straight runs: split front (gate gap), solid back, both sides.
+	local runs: { { size: Vector3, cf: CFrame } } = {
+		{ size = Vector3.new(48, h, th), cf = CFrame.new(-34, h / 2 + 0.1, -FENCE) },
+		{ size = Vector3.new(48, h, th), cf = CFrame.new(34, h / 2 + 0.1, -FENCE) },
+		{ size = Vector3.new(FENCE * 2 + th, h, th), cf = CFrame.new(0, h / 2 + 0.1, FENCE) },
+		{ size = Vector3.new(th, h, FENCE * 2 + th), cf = CFrame.new(-FENCE, h / 2 + 0.1, 0) },
+		{ size = Vector3.new(th, h, FENCE * 2 + th), cf = CFrame.new(FENCE, h / 2 + 0.1, 0) },
+	}
+	for _, run in runs do
+		part("WallRun", run.size, origin * run.cf, body, material, wall)
+		-- Cap course along the top of every run.
+		local capSize = if run.size.X > run.size.Z
+			then Vector3.new(run.size.X + 0.5, 0.45, th + 0.55)
+			else Vector3.new(th + 0.55, 0.45, run.size.Z + 0.5)
+		deco(part("WallTrim", capSize, origin * run.cf * CFrame.new(0, h / 2 + 0.22, 0), trim, material, wall))
+	end
+
+	-- Gate posts + floating arch (deco: walk and jump through freely).
+	for _, gx in { -10.8, 10.8 } do
+		part("GatePost", Vector3.new(1.7, h + 1.2, 1.7), origin * CFrame.new(gx, (h + 1.2) / 2, -FENCE), body, material, wall)
+		deco(part("GatePostCap", Vector3.new(2.2, 0.5, 2.2), origin * CFrame.new(gx, h + 1.45, -FENCE), trim, material, wall))
+	end
+	deco(part("GateArch", Vector3.new(23.8, 1.4, th + 0.5), origin * CFrame.new(0, math.max(h + 1.2, 8.4), -FENCE), trim, material, wall))
+
+	if tier <= 2 then
+		-- Corner posts + warm lanterns (the picket fence's lanterns hide with
+		-- it, so the cheap walls bring their own light).
+		for _, cx in { -FENCE, FENCE } do
+			for _, cz in { -FENCE, FENCE } do
+				part("WallCorner", Vector3.new(th + 1.8, h + 1.4, th + 1.8), origin * CFrame.new(cx, (h + 1.4) / 2, cz), body, material, wall)
+				local head = deco(part("WallLampHead", Vector3.new(1.25, 1.25, 1.25), origin * CFrame.new(cx, h + 2.3, cz), PALETTE.window, Enum.Material.Neon, wall))
+				deco(part("WallLampCap", Vector3.new(1.7, 0.35, 1.7), origin * CFrame.new(cx, h + 3.1, cz), PALETTE.roof, Enum.Material.WoodPlanks, wall))
+				local glow = Instance.new("PointLight")
+				glow.Color = PALETTE.window
+				glow.Range = 18
+				glow.Brightness = 0.7
+				glow.Parent = head
+			end
+		end
+	end
+
+	if tier == 2 or tier == 4 then
+		-- Castle merlons along both front runs.
+		local merlonColor = if tier == 4 then trim else body
+		for _, side in { -1, 1 } do
+			for i = 0, 5 do
+				local mx = side * (12 + 4 + i * 8)
+				deco(part("WallMerlon", Vector3.new(2.6, 1.2, th + 0.3), origin * CFrame.new(mx, h + 0.95, -FENCE), merlonColor, material, wall))
+			end
+		end
+	end
+
+	if tier == 3 then
+		-- Full-perimeter neon accent line + glowing corner pylons.
+		for _, run in runs do
+			local lineSize = if run.size.X > run.size.Z
+				then Vector3.new(run.size.X, 0.25, 0.2)
+				else Vector3.new(0.2, 0.25, run.size.Z)
+			deco(part("WallGlowLine", lineSize, origin * run.cf * CFrame.new(0, h / 2 - 1.2, if run.size.X > run.size.Z then -(th / 2 + 0.12) * math.sign(run.cf.Z ~= 0 and run.cf.Z or 1) else 0), trim, Enum.Material.Neon, wall))
+		end
+		for _, cx in { -FENCE, FENCE } do
+			for _, cz in { -FENCE, FENCE } do
+				part("WallPylon", Vector3.new(2.2, h + 2.4, 2.2), origin * CFrame.new(cx, (h + 2.4) / 2, cz), PALETTE.machine, Enum.Material.Metal, wall)
+				local tip = deco(part("WallPylonTip", Vector3.new(1.2, 1.2, 1.2), origin * CFrame.new(cx, h + 3.2, cz), trim, Enum.Material.Neon, wall))
+				local glow = Instance.new("PointLight")
+				glow.Color = trim
+				glow.Range = 20
+				glow.Brightness = 0.8
+				glow.Parent = tip
+			end
+		end
+	end
+
+	if tier == 4 then
+		-- Golden castle: round corner towers with gold caps + banner flags.
+		for _, cx in { -FENCE, FENCE } do
+			for _, cz in { -FENCE, FENCE } do
+				cylinder("WallTower", h + 5.5, 6, origin * CFrame.new(cx, (h + 5.5) / 2, cz), PALETTE.stoneLight, Enum.Material.Slate, wall)
+				deco(cylinder("WallTowerCap", 0.8, 7, origin * CFrame.new(cx, h + 5.9, cz), PALETTE.signGold, Enum.Material.Metal, wall))
+				local tip = deco(part("WallTowerTip", Vector3.new(1, 2, 1), origin * CFrame.new(cx, h + 7.2, cz), PALETTE.signGold, Enum.Material.Neon, wall))
+				deco(wedge("WallFlag", Vector3.new(0.2, 1.3, 2.4), origin * CFrame.new(cx + 1.3, h + 7.6, cz), Color3.fromRGB(255, 92, 92), nil, wall))
+				local glow = Instance.new("PointLight")
+				glow.Color = PALETTE.signGold
+				glow.Range = 22
+				glow.Brightness = 0.8
+				glow.Parent = tip
+			end
+		end
+		-- Gold finials flanking the gate arch.
+		for _, gx in { -10.8, 10.8 } do
+			deco(part("GateFinial", Vector3.new(0.9, 1.6, 0.9), origin * CFrame.new(gx, h + 2.5, -FENCE), PALETTE.signGold, Enum.Material.Neon, wall))
+		end
+	end
+
+	wall.Parent = plot
+end
+
+-- ===== Rebirth tower (RebirthFloor1..5) =====
+-- One pastel storey per rebirth stacks above the factory's back roof — the
+-- plot literally grows taller with prestige. Floor 5 carries the golden
+-- crown + beacon. All floors build hidden; SetRebirthFloors reveals
+-- 1..rebirths (PlotService applies it on every build/rebuild).
+
+local REBIRTH_BASE_Y = 22.6 -- clears the tilted roof-keyboard deck (~y 21.5)
+local REBIRTH_STOREY = 6.2
+local REBIRTH_TOWER_Z = 51
+
+local function buildRebirthFloor(plot: Model, origin: CFrame, floorIndex: number)
+	local floorColors = {
+		Color3.fromRGB(255, 196, 116),
+		Color3.fromRGB(150, 206, 255),
+		Color3.fromRGB(255, 158, 196),
+		Color3.fromRGB(164, 226, 154),
+		Color3.fromRGB(255, 220, 120),
+	}
+	local model = Instance.new("Model")
+	model.Name = "RebirthFloor" .. tostring(floorIndex)
+	local color = floorColors[floorIndex]
+	local w = 30 - (floorIndex - 1) * 3
+	local baseY = REBIRTH_BASE_Y + (floorIndex - 1) * REBIRTH_STOREY
+	local cz = REBIRTH_TOWER_Z
+
+	if floorIndex == 1 then
+		-- Back support pillars land on the factory roof behind the keyboard
+		-- deck; the front half cantilevers over it on purpose.
+		for _, px in { -15, -5, 5, 15 } do
+			part("TowerPillar", Vector3.new(1.6, 6.6, 1.6), origin * CFrame.new(px, 19.4, 55.6), PALETTE.machine, Enum.Material.Metal, model)
+		end
+	end
+
+	part("FloorSlab", Vector3.new(w + 2, 0.8, 14), origin * CFrame.new(0, baseY + 0.4, cz), PALETTE.floor, nil, model)
+	local wallH = REBIRTH_STOREY - 1.4
+	local wallY = baseY + 0.8 + wallH / 2
+	part("FloorWall", Vector3.new(w, wallH, 1), origin * CFrame.new(0, wallY, cz - 6), color, nil, model)
+	part("FloorWall", Vector3.new(w, wallH, 1), origin * CFrame.new(0, wallY, cz + 6), color, nil, model)
+	part("FloorWall", Vector3.new(1, wallH, 12), origin * CFrame.new(-w / 2 + 0.5, wallY, cz), color, nil, model)
+	part("FloorWall", Vector3.new(1, wallH, 12), origin * CFrame.new(w / 2 - 0.5, wallY, cz), color, nil, model)
+	-- Glowing window band on the front face (visible from the whole map).
+	deco(part("FloorWindow", Vector3.new(w - 4, 1.6, 0.3), origin * CFrame.new(0, wallY + 0.4, cz - 6.6), PALETTE.window, Enum.Material.Neon, model))
+	-- Corner trim posts.
+	for _, sx in { -1, 1 } do
+		for _, sz in { -1, 1 } do
+			deco(part("FloorCorner", Vector3.new(1.3, wallH + 0.6, 1.3), origin * CFrame.new(sx * (w / 2 - 0.5), wallY, cz + sz * 6), PALETTE.stoneLight, nil, model))
+		end
+	end
+	-- Thin cap so the current top floor never looks raw; the next floor's
+	-- slab sits flush on top of it.
+	deco(part("FloorCap", Vector3.new(w + 1, 0.5, 13.4), origin * CFrame.new(0, baseY + REBIRTH_STOREY - 0.25, cz), PALETTE.stoneLight, nil, model))
+
+	if floorIndex == REBIRTH_FLOORS then
+		part("TowerRoof", Vector3.new(w + 1.6, 0.8, 14), origin * CFrame.new(0, baseY + REBIRTH_STOREY + 0.2, cz), PALETTE.roof, Enum.Material.WoodPlanks, model)
+		deco(cylinder("CrownRing", 0.8, 7, origin * CFrame.new(0, baseY + REBIRTH_STOREY + 0.9, cz), PALETTE.signGold, Enum.Material.Metal, model))
+		local beacon = deco(part("Beacon", Vector3.new(1.4, 5.5, 1.4), origin * CFrame.new(0, baseY + REBIRTH_STOREY + 4, cz), Color3.fromRGB(255, 240, 170), Enum.Material.Neon, model))
+		local glow = Instance.new("PointLight")
+		glow.Color = PALETTE.signGold
+		glow.Range = 60
+		glow.Brightness = 1.2
+		glow.Parent = beacon
+	end
+
+	model.Parent = plot
 end
 
 local function buildFactory(plot: Model, origin: CFrame)
@@ -744,6 +947,8 @@ local function padLocalCFrame(kind: string, level: number): CFrame
 		return CFrame.new(-40, y, 0) -- left edge, mid-plot
 	elseif kind == "storage" then
 		return CFrame.new(40, y, 8) -- right edge, on the way to the sell corner
+	elseif kind == "walls" then
+		return CFrame.new(-40, y, -20) -- left edge, front half (tiers share one spot)
 	elseif kind == "rebirth" then
 		return CFrame.new(0, y, 20) -- center stage, in front of the factory
 	end
@@ -1000,7 +1205,13 @@ function PlotBuilder.Build(plotIndex: number, player: Player): Model
 
 	local base = buildBase(plot, origin)
 	buildFence(plot, origin)
+	for tier = 1, WALL_TIERS do
+		buildWallTier(plot, origin, tier)
+	end
 	buildFactory(plot, origin)
+	for floorIndex = 1, REBIRTH_FLOORS do
+		buildRebirthFloor(plot, origin, floorIndex)
+	end
 	for lane = 1, GameConfig.MaxConveyors do
 		buildConveyor(plot, origin, lane)
 	end
@@ -1028,6 +1239,18 @@ function PlotBuilder.Build(plotIndex: number, player: Player): Model
 			applyVisibility(stand, false)
 		end
 	end
+	for tier = 1, WALL_TIERS do
+		local wallTier = plot:FindFirstChild("WallTier" .. tostring(tier))
+		if wallTier ~= nil then
+			applyVisibility(wallTier, false)
+		end
+	end
+	for floorIndex = 1, REBIRTH_FLOORS do
+		local floorModel = plot:FindFirstChild("RebirthFloor" .. tostring(floorIndex))
+		if floorModel ~= nil then
+			applyVisibility(floorModel, false)
+		end
+	end
 	for _, padDef in Pads do
 		if padDef.prereq ~= nil then
 			PlotBuilder.SetPadVisible(plot, padDef.id, false)
@@ -1037,6 +1260,21 @@ function PlotBuilder.Build(plotIndex: number, player: Player): Model
 	plot.PrimaryPart = base
 	plot.Parent = plotsFolder
 	return plot
+end
+
+-- Shows rebirth-tower storeys 1..rebirths (idempotent). PlotService calls
+-- this after every plot build/rebuild; RebirthService's rebuild picks the
+-- new floor up automatically.
+function PlotBuilder.SetRebirthFloors(plot: Model, rebirths: number)
+	for floorIndex = 1, REBIRTH_FLOORS do
+		local floorModel = plot:FindFirstChild("RebirthFloor" .. tostring(floorIndex))
+		if floorModel ~= nil then
+			local show = floorIndex <= rebirths
+			if isVisible(floorModel) ~= show then
+				applyVisibility(floorModel, show)
+			end
+		end
+	end
 end
 
 function PlotBuilder.SetPadVisible(plot: Model, padId: string, visible: boolean)
@@ -1122,6 +1360,26 @@ function PlotBuilder.OnPadPurchased(plot: Model, padId: string)
 			local plate = stand.PrimaryPart
 			if live and plate ~= nil then
 				burst(plate.Position + Vector3.new(0, 2, 0), PAD_KIND_COLORS.display, plot)
+			end
+		end
+	elseif kind == "walls" then
+		-- Swap in the bought tier: picket fence and every other tier hide,
+		-- tier `level` shows. Replay-safe: pads replay lowest-first, so the
+		-- highest owned tier ends up visible.
+		local fence = plot:FindFirstChild("Fence")
+		if fence ~= nil and isVisible(fence) then
+			applyVisibility(fence, false)
+		end
+		for tier = 1, WALL_TIERS do
+			local wallTier = plot:FindFirstChild("WallTier" .. tostring(tier))
+			if wallTier ~= nil and isVisible(wallTier) ~= (tier == level) then
+				applyVisibility(wallTier, tier == level)
+			end
+		end
+		if live and padModel ~= nil then
+			local padPart = (padModel :: Model):FindFirstChild("Pad")
+			if padPart ~= nil and padPart:IsA("BasePart") then
+				burst(padPart.Position + Vector3.new(0, 3, 0), PAD_KIND_COLORS.walls, plot)
 			end
 		end
 	elseif kind == "factoryTier" then

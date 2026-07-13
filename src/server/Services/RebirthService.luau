@@ -70,9 +70,11 @@ local function tryRebirth(player: Player)
 	profile.upgrades.luck = 0
 	profile.upgrades.storage = 0
 
+	-- Displays AND walls survive rebirth: both are prestige purchases the
+	-- player shows off, not progression to grind back.
 	local keptPads: { [string]: boolean } = {}
 	for _, pad in Pads do
-		if pad.kind == "display" and profile.pads[pad.id] then
+		if (pad.kind == "display" or pad.kind == "walls") and profile.pads[pad.id] then
 			keptPads[pad.id] = true
 		end
 	end
@@ -88,7 +90,7 @@ local function tryRebirth(player: Player)
 	local bonusPercent = math.floor(profile.rebirths * GameConfig.Rebirth.ValueBonusPerRebirth * 100)
 	Remotes.Notify:FireAllClients(
 		"flex",
-		`⟳ {player.Name} reached REBIRTH {profile.rebirths}! Their keyboards now sell for +{bonusPercent}% forever.`
+		`⟳ {player.Name} reached REBIRTH {profile.rebirths}! Their factory grew a new floor and their keyboards sell for +{bonusPercent}% forever.`
 	)
 end
 

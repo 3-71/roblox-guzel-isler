@@ -61,6 +61,7 @@ local function defaultProfile(): Types.Profile
 			luck = 0,
 			storage = 0,
 			displays = 0,
+			walls = 0,
 		},
 		pads = {},
 		displayed = {},

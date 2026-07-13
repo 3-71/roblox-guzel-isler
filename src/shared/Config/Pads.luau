@@ -92,6 +92,22 @@ for level, cost in storageCosts do
 	})
 end
 
+-- Plot walls (1..4): pure cosmetic prestige — each tier replaces the picket
+-- fence with a grander wall (wood -> stone -> neon steel -> golden castle).
+-- Like display stands, walls SURVIVE rebirth (RebirthService keeps the pads).
+local wallCosts = { 2_500, 40_000, 900_000, 12_000_000 }
+local wallNames = { "Wooden Walls", "Stone Walls", "Neon Walls", "Golden Castle Walls" }
+for level, cost in wallCosts do
+	add({
+		id = `walls_{level}`,
+		kind = "walls",
+		level = level,
+		name = wallNames[level],
+		cost = cost,
+		prereq = if level == 1 then "factory_2" else `walls_{level - 1}`,
+	})
+end
+
 -- Showcase display stands (1..6): the flex shelf at the front of your plot.
 local displayCosts = { 500, 5_000, 50_000, 500_000, 5_000_000, 50_000_000 }
 for level, cost in displayCosts do

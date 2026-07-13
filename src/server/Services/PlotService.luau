@@ -138,6 +138,7 @@ local function setupPlot(player: Player, profile: Types.Profile)
 			warn(`[PlotService] OnPadPurchased replay failed for "{padId}": {applyErr}`)
 		end
 	end
+	pcall(PlotBuilder.SetRebirthFloors, plot, profile.rebirths or 0)
 
 	-- Wire touch-to-buy once, then let PadService apply the prereq graph:
 	-- owned pads hidden, available visible, locked invisible.
@@ -179,6 +180,7 @@ function PlotService.RebuildForProfile(player: Player)
 			warn(`[PlotService] OnPadPurchased rebuild replay failed for "{padId}": {applyErr}`)
 		end
 	end
+	pcall(PlotBuilder.SetRebirthFloors, plot, profile.rebirths or 0)
 
 	PadService.BindPlot(player, plot)
 	PadService.RefreshPads(player)

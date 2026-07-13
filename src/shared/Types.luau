@@ -20,6 +20,7 @@ export type Upgrades = {
 	luck: number, -- 0..10
 	storage: number, -- 0..5
 	displays: number, -- 0..6
+	walls: number, -- 0..4 cosmetic wall tier (survives rebirth, like displays)
 }
 
 export type Profile = {

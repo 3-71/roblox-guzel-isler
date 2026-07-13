@@ -45,6 +45,7 @@ local FIELD_FOR_KIND: { [string]: string } = {
 	luck = "luck",
 	storage = "storage",
 	display = "displays",
+	walls = "walls",
 }
 
 local boundPlots: { [Player]: Model } = {}
