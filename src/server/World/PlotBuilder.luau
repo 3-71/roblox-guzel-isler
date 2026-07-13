@@ -68,6 +68,7 @@ local PALETTE = {
 	steel = Color3.fromRGB(126, 132, 146),
 	stone = Color3.fromRGB(214, 208, 196),
 	stoneLight = Color3.fromRGB(236, 230, 218),
+	dirt = Color3.fromRGB(205, 178, 133),
 	spawn = Color3.fromRGB(196, 178, 255),
 	signBoard = Color3.fromRGB(255, 244, 222),
 	signText = Color3.fromRGB(92, 62, 40),
@@ -149,6 +150,38 @@ local function cylinder(
 	local p = part(name, Vector3.new(height, diameter, diameter), cf * CFrame.Angles(0, 0, math.rad(90)), color, material, parent)
 	p.Shape = Enum.PartType.Cylinder
 	return p
+end
+
+-- Marks a part as pure decoration: characters, Touched listeners and raycasts
+-- all ignore it.
+local function deco(p: BasePart): BasePart
+	p.CanCollide = false
+	p.CanTouch = false
+	p.CanQuery = false
+	return p
+end
+
+-- Sloped prism, same argument order as part(). The top face ramps down toward
+-- local -Z (front), which is exactly the chute direction on this plot.
+local function wedge(
+	name: string,
+	size: Vector3,
+	cf: CFrame,
+	color: Color3,
+	material: Enum.Material?,
+	parent: Instance
+): WedgePart
+	local w = Instance.new("WedgePart")
+	w.Name = name
+	w.Anchored = true
+	w.Size = size
+	w.CFrame = cf
+	w.Color = color
+	w.Material = material or Enum.Material.SmoothPlastic
+	w.TopSurface = Enum.SurfaceType.Smooth
+	w.BottomSurface = Enum.SurfaceType.Smooth
+	w.Parent = parent
+	return w
 end
 
 local function abbreviate(n: number): string
@@ -282,17 +315,22 @@ local function buildFence(plot: Model, origin: CFrame)
 	fence.Name = "Fence"
 
 	local postSize = Vector3.new(0.9, 3.2, 0.9)
+	-- Every post wears a little wooden cap so the fence reads hand-carved.
+	local function post(cf: CFrame)
+		part("FencePost", postSize, cf, PALETTE.fence, nil, fence)
+		deco(part("FencePostCap", Vector3.new(1.25, 0.3, 1.25), cf * CFrame.new(0, 1.75, 0), PALETTE.rail, Enum.Material.WoodPlanks, fence))
+	end
 	local step = (FENCE * 2) / 6
 	for i = 0, 6 do
 		local t = -FENCE + i * step
 		-- Front side (z = -FENCE) keeps a gate gap in the middle.
 		if math.abs(t) > 12 then
-			part("FencePost", postSize, origin * CFrame.new(t, 1.6, -FENCE), PALETTE.fence, nil, fence)
+			post(origin * CFrame.new(t, 1.6, -FENCE))
 		end
-		part("FencePost", postSize, origin * CFrame.new(t, 1.6, FENCE), PALETTE.fence, nil, fence)
+		post(origin * CFrame.new(t, 1.6, FENCE))
 		if i > 0 and i < 6 then
-			part("FencePost", postSize, origin * CFrame.new(-FENCE, 1.6, t), PALETTE.fence, nil, fence)
-			part("FencePost", postSize, origin * CFrame.new(FENCE, 1.6, t), PALETTE.fence, nil, fence)
+			post(origin * CFrame.new(-FENCE, 1.6, t))
+			post(origin * CFrame.new(FENCE, 1.6, t))
 		end
 	end
 
@@ -302,6 +340,20 @@ local function buildFence(plot: Model, origin: CFrame)
 	part("FenceRail", Vector3.new(0.4, 0.5, FENCE * 2 + 0.9), origin * CFrame.new(FENCE, 2.1, 0), PALETTE.fence, nil, fence)
 	part("FenceRail", Vector3.new(48, 0.5, 0.4), origin * CFrame.new(-34, 2.1, -FENCE), PALETTE.fence, nil, fence)
 	part("FenceRail", Vector3.new(48, 0.5, 0.4), origin * CFrame.new(34, 2.1, -FENCE), PALETTE.fence, nil, fence)
+
+	-- Warm lantern in each corner of the yard.
+	for _, cx in { -52, 52 } do
+		for _, cz in { -52, 52 } do
+			deco(part("LampPost", Vector3.new(0.55, 6.6, 0.55), origin * CFrame.new(cx, 3.3, cz), PALETTE.wood, Enum.Material.WoodPlanks, fence))
+			local head = deco(part("LampHead", Vector3.new(1.25, 1.25, 1.25), origin * CFrame.new(cx, 7.0, cz), PALETTE.window, Enum.Material.Neon, fence))
+			deco(part("LampCap", Vector3.new(1.7, 0.35, 1.7), origin * CFrame.new(cx, 7.8, cz), PALETTE.roof, Enum.Material.WoodPlanks, fence))
+			local glow = Instance.new("PointLight")
+			glow.Color = PALETTE.window
+			glow.Range = 18
+			glow.Brightness = 0.7
+			glow.Parent = head
+		end
+	end
 
 	fence.Parent = plot
 end
@@ -403,6 +455,43 @@ local function buildFactory(plot: Model, origin: CFrame)
 	local stem = part("MachineStem", Vector3.new(30, 1.2, 8), origin * CFrame.new(0, 7.6, 40), Color3.fromRGB(255, 196, 116), Enum.Material.Neon, factory)
 	stem.CanCollide = false
 
+	-- Skirting boards along the wall bases + cream cornice and roof fascia so
+	-- the shell reads hand-built instead of box-plain.
+	deco(part("FactorySkirt", Vector3.new(0.6, 1.6, 25), origin * CFrame.new(-26.3, 0.8, 44), PALETTE.roof, Enum.Material.WoodPlanks, factory))
+	deco(part("FactorySkirt", Vector3.new(0.6, 1.6, 25), origin * CFrame.new(26.3, 0.8, 44), PALETTE.roof, Enum.Material.WoodPlanks, factory))
+	deco(part("FactorySkirt", Vector3.new(53, 1.6, 0.6), origin * CFrame.new(0, 0.8, 56.3), PALETTE.roof, Enum.Material.WoodPlanks, factory))
+	deco(part("FactoryCornice", Vector3.new(0.7, 0.9, 25), origin * CFrame.new(-26.35, 14.3, 44), PALETTE.fence, nil, factory))
+	deco(part("FactoryCornice", Vector3.new(0.7, 0.9, 25), origin * CFrame.new(26.35, 14.3, 44), PALETTE.fence, nil, factory))
+	deco(part("RoofFascia", Vector3.new(57, 0.7, 0.9), origin * CFrame.new(0, 14.6, 30.2), PALETTE.fence, nil, factory))
+	deco(part("RoofFascia", Vector3.new(57, 0.7, 0.9), origin * CFrame.new(0, 14.6, 57.8), PALETTE.fence, nil, factory))
+
+	-- Side dressing per wall: steam pipe, diamond-plate vent and a glowing
+	-- porthole (right side dodges the chimney at z 50..54 and window at z 40).
+	for _, side in { -1, 1 } do
+		local pipeZ = if side == 1 then 44 else 50
+		deco(cylinder("FactoryPipe", 11, 1.2, origin * CFrame.new(side * 26.4, 6.5, pipeZ), PALETTE.steel, Enum.Material.Metal, factory))
+		deco(part("FactoryVent", Vector3.new(0.9, 2.4, 3.2), origin * CFrame.new(side * 26.45, 8, 34.8), PALETTE.machine, Enum.Material.DiamondPlate, factory))
+		local ring = part("Porthole", Vector3.new(0.7, 3.2, 3.2), origin * CFrame.new(side * 26.1, 9.5, 47.5), PALETTE.fence, Enum.Material.Metal, factory)
+		ring.Shape = Enum.PartType.Cylinder
+		deco(ring)
+		local glass = part("PortholeGlass", Vector3.new(0.75, 2.2, 2.2), origin * CFrame.new(side * 26.15, 9.5, 47.5), PALETTE.window, Enum.Material.Neon, factory)
+		glass.Shape = Enum.PartType.Cylinder
+		deco(glass)
+	end
+
+	-- A cheerful little awning over each belt mouth (alternating colors).
+	for lane = 1, GameConfig.MaxConveyors do
+		local awningColor = if lane % 2 == 0 then PALETTE.arch else PALETTE.fence
+		deco(part(
+			"MouthAwning",
+			Vector3.new(5.6, 0.3, 3.0),
+			origin * CFrame.new(laneX(lane), 10.0, 31.4) * CFrame.Angles(math.rad(-14), 0, 0),
+			awningColor,
+			nil,
+			factory
+		))
+	end
+
 	factory.Parent = plot
 end
 
@@ -453,15 +542,70 @@ local function buildConveyor(plot: Model, origin: CFrame, lane: number)
 		end
 	end
 
-	-- Collector arch with a glowing "scanner" bar + bigger bin at the front end.
-	part("ArchPost", Vector3.new(0.9, 6.4, 0.9), origin * CFrame.new(x - 2.75, 3.2, -30), PALETTE.arch, nil, conveyor)
-	part("ArchPost", Vector3.new(0.9, 6.4, 0.9), origin * CFrame.new(x + 2.75, 3.2, -30), PALETTE.arch, nil, conveyor)
+	-- ===== Collector packing station =====
+	-- Chunky layered arch (footed posts + corner blocks), a COLLECT header
+	-- board with a status lamp, and a scanner bar under the top beam.
+	for _, side in { -1, 1 } do
+		part("ArchPost", Vector3.new(0.9, 6.4, 0.9), origin * CFrame.new(x + side * 2.75, 3.2, -30), PALETTE.arch, nil, conveyor)
+		deco(part("ArchFoot", Vector3.new(1.5, 1.1, 1.5), origin * CFrame.new(x + side * 2.75, 0.55, -30), PALETTE.machine, Enum.Material.Metal, conveyor))
+		deco(part("ArchBlock", Vector3.new(1.3, 1.0, 1.3), origin * CFrame.new(x + side * 2.75, 6.4, -30), PALETTE.fence, nil, conveyor))
+	end
 	part("ArchTop", Vector3.new(6.4, 0.9, 0.9), origin * CFrame.new(x, 6.85, -30), PALETTE.arch, nil, conveyor)
-	local scanner = part("Scanner", Vector3.new(5.6, 0.22, 0.22), origin * CFrame.new(x, 5.3, -30), PALETTE.stripe, Enum.Material.Neon, conveyor)
-	scanner.CanCollide = false
+	deco(part("Scanner", Vector3.new(5.6, 0.22, 0.22), origin * CFrame.new(x, 5.3, -30), PALETTE.stripe, Enum.Material.Neon, conveyor))
+	local header = deco(part("ArchHeader", Vector3.new(7.2, 1.3, 0.9), origin * CFrame.new(x, 7.75, -30), PALETTE.fence, nil, conveyor))
+	local headerGui = Instance.new("SurfaceGui")
+	headerGui.Face = Enum.NormalId.Front
+	headerGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	headerGui.PixelsPerStud = 30
+	headerGui.LightInfluence = 0
+	local headerLabel = Instance.new("TextLabel")
+	headerLabel.BackgroundTransparency = 1
+	headerLabel.Size = UDim2.fromScale(1, 1)
+	headerLabel.Font = Enum.Font.FredokaOne
+	headerLabel.Text = "📦 COLLECT"
+	headerLabel.TextScaled = true
+	headerLabel.TextColor3 = Color3.fromRGB(38, 52, 72)
+	headerLabel.Parent = headerGui
+	headerGui.Parent = header
+	local lamp = deco(part("StatusLamp", Vector3.new(0.7, 0.7, 0.7), origin * CFrame.new(x, 8.75, -30), PALETTE.sell, Enum.Material.Neon, conveyor))
+	local lampLight = Instance.new("PointLight")
+	lampLight.Color = PALETTE.sell
+	lampLight.Range = 9
+	lampLight.Brightness = 0.6
+	lampLight.Parent = lamp
+
+	-- Rimmed bin: a chute wedge slides boards off the belt end into the
+	-- glowing mouth while funnel guides keep them centred.
 	part("Collector", Vector3.new(5.4, 2.2, 3.4), origin * CFrame.new(x, 1.1, -33.6), PALETTE.bin, nil, conveyor)
-	local mouth = part("CollectorMouth", Vector3.new(4.6, 1.4, 0.2), origin * CFrame.new(x, 1.3, -31.8), PALETTE.arch, Enum.Material.Neon, conveyor)
-	mouth.CanCollide = false
+	deco(part("CollectorRim", Vector3.new(5.9, 0.4, 3.9), origin * CFrame.new(x, 2.35, -33.6), PALETTE.steel, Enum.Material.Metal, conveyor))
+	deco(part("CollectorMouth", Vector3.new(4.6, 1.4, 0.2), origin * CFrame.new(x, 1.3, -31.8), PALETTE.arch, Enum.Material.Neon, conveyor))
+	deco(wedge("CollectorChute", Vector3.new(4.4, 0.75, 3.6), origin * CFrame.new(x, 0.975, -29.9), PALETTE.steel, Enum.Material.Metal, conveyor))
+	for _, side in { -1, 1 } do
+		deco(part(
+			"FunnelGuide",
+			Vector3.new(0.3, 1.3, 3.4),
+			origin * CFrame.new(x + side * 2.1, 1.6, -29.6) * CFrame.Angles(0, math.rad(side * 12), 0),
+			PALETTE.machine,
+			Enum.Material.Metal,
+			conveyor
+		))
+	end
+	-- Tiny enter-keycap perched on the bin rim.
+	local binCap = deco(part("BinKeycap", Vector3.new(1.7, 0.8, 1.7), origin * CFrame.new(x + 1.7, 2.95, -34.4), PALETTE.fence, nil, conveyor))
+	local capGui = Instance.new("SurfaceGui")
+	capGui.Face = Enum.NormalId.Top
+	capGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	capGui.PixelsPerStud = 30
+	capGui.LightInfluence = 0
+	local capLabel = Instance.new("TextLabel")
+	capLabel.BackgroundTransparency = 1
+	capLabel.Size = UDim2.fromScale(1, 1)
+	capLabel.Font = Enum.Font.FredokaOne
+	capLabel.Text = "⏎"
+	capLabel.TextScaled = true
+	capLabel.TextColor3 = PALETTE.signText
+	capLabel.Parent = capGui
+	capGui.Parent = binCap
 
 	conveyor.Parent = plot
 end
@@ -506,6 +650,7 @@ local function buildSellZone(plot: Model, origin: CFrame)
 
 	part("Counter", Vector3.new(10, 2.2, 2.2), sellCF * CFrame.new(0, 1.1, -1.2), PALETTE.wood, Enum.Material.WoodPlanks, stall)
 	part("CounterTop", Vector3.new(10.8, 0.4, 3), sellCF * CFrame.new(0, 2.4, -1.2), PALETTE.fence, Enum.Material.WoodPlanks, stall)
+	deco(part("CounterTrim", Vector3.new(10.6, 0.25, 0.3), sellCF * CFrame.new(0, 2.15, -2.75), PALETTE.sell, nil, stall))
 	for _, sx in { -4.8, 4.8 } do
 		for _, sz in { -2.4, 1.8 } do
 			part("StallPost", Vector3.new(0.7, 7, 0.7), sellCF * CFrame.new(sx, 3.5, sz), PALETTE.wood, Enum.Material.WoodPlanks, stall)
@@ -560,9 +705,20 @@ local function buildDisplayStand(plot: Model, origin: CFrame, standIndex: number
 	local x = STAND_X[standIndex] or (standIndex - 3.5) * 15
 	local footCF = origin * CFrame.new(x, 0, STAND_Z)
 
+	-- Layered plinth -> stone base -> column with a brass ring -> plate with a
+	-- soft up-light and a little nameplate ledge at the front.
+	cylinder("StandPlinth", 0.28, 6.6, footCF * CFrame.new(0, 0.14, 0), PALETTE.stoneLight, Enum.Material.Slate, stand)
 	cylinder("StandBase", 0.5, 5, footCF * CFrame.new(0, 0.25, 0), PALETTE.stone, nil, stand)
 	part("StandColumn", Vector3.new(1.7, 3.2, 1.7), footCF * CFrame.new(0, 2.1, 0), PALETTE.stoneLight, nil, stand)
+	deco(cylinder("StandRing", 0.22, 2.7, footCF * CFrame.new(0, 3.5, 0), PALETTE.signGold, Enum.Material.Metal, stand))
 	local plate = part("StandPlate", Vector3.new(3.6, 0.4, 3.6), footCF * CFrame.new(0, 3.9, 0), PALETTE.stoneLight, nil, stand)
+	deco(part("StandLedge", Vector3.new(2.6, 0.3, 0.7), footCF * CFrame.new(0, 3.55, -2.0), PALETTE.signBoard, Enum.Material.WoodPlanks, stand))
+
+	local upLight = Instance.new("PointLight")
+	upLight.Color = PALETTE.window
+	upLight.Range = 7
+	upLight.Brightness = 0.5
+	upLight.Parent = plate
 
 	-- ShowcaseService pivots displayed keyboards to this anchor.
 	local anchor = Instance.new("Attachment")
@@ -700,6 +856,99 @@ local function buildSpawnPad(plot: Model, origin: CFrame)
 	spawnPad.Parent = plot
 end
 
+-- Pure eye-candy layer: dirt paths, stepping stones, giant keycap props,
+-- flowers and the spawn landing ring. Everything is non-colliding decoration,
+-- so walkways, Touched pads and raycasts are unaffected.
+local function buildGroundDecor(plot: Model, origin: CFrame)
+	local decor = Instance.new("Model")
+	decor.Name = "Decor"
+
+	-- Dirt paths: gate -> stand row, then a cross path past the spawn pad all
+	-- the way to the sell corner (flat 0.05 overlays on the grass).
+	deco(part("PathStrip", Vector3.new(7, 0.05, 15), origin * CFrame.new(0, 0.03, -50.5), PALETTE.dirt, Enum.Material.Ground, decor))
+	deco(part("PathStrip", Vector3.new(90, 0.05, 5), origin * CFrame.new(1, 0.03, -44), PALETTE.dirt, Enum.Material.Ground, decor))
+
+	-- Stepping stones up the centre walkway toward the rebirth pad.
+	local stoneSpots = {
+		Vector2.new(0, -41),
+		Vector2.new(0.5, -35),
+		Vector2.new(-0.5, -29),
+		Vector2.new(0.4, -23),
+		Vector2.new(-0.4, -17),
+		Vector2.new(0.3, -11),
+	}
+	for i, spot in stoneSpots do
+		local stoneColor = if i % 2 == 0 then PALETTE.stoneLight else PALETTE.stone
+		deco(cylinder("SteppingStone", 0.06, 1.8, origin * CFrame.new(spot.X, 0.03, spot.Y), stoneColor, Enum.Material.Slate, decor))
+	end
+
+	-- Two giant fallen keycaps ("G" and "K") as landmarks off the walkways.
+	local props = {
+		{ x = -48, z = -16, letter = "G", color = Color3.fromRGB(236, 232, 224), text = PALETTE.signText },
+		{ x = 50, z = 26, letter = "K", color = Color3.fromRGB(150, 206, 255), text = Color3.fromRGB(38, 52, 72) },
+	}
+	for _, prop in props do
+		local cap = deco(part(
+			"GiantKeycap",
+			Vector3.new(4.6, 2.6, 4.6),
+			origin * CFrame.new(prop.x, 1.3, prop.z) * CFrame.Angles(0, math.rad(14), 0),
+			prop.color,
+			nil,
+			decor
+		))
+		local gui = Instance.new("SurfaceGui")
+		gui.Face = Enum.NormalId.Top
+		gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		gui.PixelsPerStud = 30
+		gui.LightInfluence = 0
+		local letter = Instance.new("TextLabel")
+		letter.BackgroundTransparency = 1
+		letter.Size = UDim2.fromScale(1, 1)
+		letter.Font = Enum.Font.FredokaOne
+		letter.Text = prop.letter
+		letter.TextScaled = true
+		letter.TextColor3 = prop.text
+		letter.Parent = gui
+		gui.Parent = cap
+	end
+
+	-- Grass tufts with a bright bloom on top, scattered off the walkways.
+	local blooms = {
+		{ x = -50, z = -28, color = PAD_KIND_COLORS.display },
+		{ x = 30, z = -18, color = PALETTE.stripe },
+		{ x = -52, z = 36, color = PAD_KIND_COLORS.speed },
+	}
+	for _, bloom in blooms do
+		deco(part(
+			"GrassTuft",
+			Vector3.new(1.0, 0.8, 1.0),
+			origin * CFrame.new(bloom.x, 0.35, bloom.z) * CFrame.Angles(0, math.rad(30), 0),
+			Color3.fromRGB(96, 176, 74),
+			Enum.Material.Grass,
+			decor
+		))
+		deco(part(
+			"Flower",
+			Vector3.new(0.55, 0.55, 0.55),
+			origin * CFrame.new(bloom.x, 0.95, bloom.z) * CFrame.Angles(math.rad(15), math.rad(40), 0),
+			bloom.color,
+			Enum.Material.Neon,
+			decor
+		))
+	end
+
+	-- Friendly landing ring around the spawn pad (pad itself is untouched).
+	deco(cylinder("SpawnGlow", 0.14, 13.2, origin * CFrame.new(-36, 0.07, -42), PALETTE.spawn, Enum.Material.Neon, decor))
+	local spawnRing = deco(cylinder("SpawnRing", 0.3, 11.6, origin * CFrame.new(-36, 0.16, -42), PALETTE.stoneLight, Enum.Material.Slate, decor))
+	local spawnLight = Instance.new("PointLight")
+	spawnLight.Color = PALETTE.spawn
+	spawnLight.Range = 10
+	spawnLight.Brightness = 0.4
+	spawnLight.Parent = spawnRing
+
+	decor.Parent = plot
+end
+
 local function buildSign(plot: Model, origin: CFrame, player: Player)
 	local sign = Instance.new("Model")
 	sign.Name = "Sign"
@@ -711,6 +960,8 @@ local function buildSign(plot: Model, origin: CFrame, player: Player)
 	-- (back face +0.3), posts are 0.8 deep centred at z 0.7 (front face +0.3).
 	part("SignPost", Vector3.new(0.8, 7.4, 0.8), signCF * CFrame.new(-5.6, 3.7, 0.7), PALETTE.wood, Enum.Material.WoodPlanks, sign)
 	part("SignPost", Vector3.new(0.8, 7.4, 0.8), signCF * CFrame.new(5.6, 3.7, 0.7), PALETTE.wood, Enum.Material.WoodPlanks, sign)
+	deco(part("SignFoot", Vector3.new(1.3, 0.6, 1.3), signCF * CFrame.new(-5.6, 0.3, 0.7), PALETTE.wood, Enum.Material.WoodPlanks, sign))
+	deco(part("SignFoot", Vector3.new(1.3, 0.6, 1.3), signCF * CFrame.new(5.6, 0.3, 0.7), PALETTE.wood, Enum.Material.WoodPlanks, sign))
 	local board = part("SignBoard", Vector3.new(13.5, 3.4, 0.6), signCF * CFrame.new(0, 6.2, 0), PALETTE.signBoard, Enum.Material.WoodPlanks, sign)
 	-- Little roof cap on top of the board.
 	part("SignCap", Vector3.new(14.3, 0.5, 1.2), signCF * CFrame.new(0, 8.15, 0.15), PALETTE.roof, Enum.Material.WoodPlanks, sign)
@@ -759,6 +1010,7 @@ function PlotBuilder.Build(plotIndex: number, player: Player): Model
 	end
 	buildPads(plot, origin)
 	buildSpawnPad(plot, origin)
+	buildGroundDecor(plot, origin)
 	buildSign(plot, origin, player)
 
 	-- Fresh-plot visibility baseline: conveyor 1 is the free starter lane,

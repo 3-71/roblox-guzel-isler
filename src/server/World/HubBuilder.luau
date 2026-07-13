@@ -4,6 +4,11 @@
 -- sign, a giant keyboard monument, and paths radiating to every plot (same
 -- ring math as PlotBuilder — plot positions come from
 -- PlotBuilder.GetPlotCFrame so hub and plots can never drift apart).
+-- Build() also dresses game.Lighting once (warm afternoon sun + subtle
+-- atmosphere/bloom/color grade) and sprinkles festival decoration: bunting,
+-- balloons, planters, flower patches, rugs, and keycap props — every new
+-- dressing part goes through deco() so it can never collide, eat Touched
+-- events, or block raycasts.
 --
 -- Contract: parented under Workspace.Hub (Folder, created if missing), with
 -- one enabled central SpawnLocation named exactly "HubSpawn". A large ground
@@ -47,6 +52,7 @@
 --                                   itself is driven from the inventory UI.
 
 local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -69,6 +75,7 @@ local PALETTE = {
 	ground = Color3.fromRGB(106, 172, 88),
 	grassRing = Color3.fromRGB(122, 196, 98),
 	plaza = Color3.fromRGB(226, 217, 203),
+	plazaAccent = Color3.fromRGB(213, 198, 176),
 	path = Color3.fromRGB(232, 210, 168),
 	trunk = Color3.fromRGB(140, 100, 66),
 	leaves = Color3.fromRGB(104, 180, 96),
@@ -140,6 +147,215 @@ local function cylinder(
 	return p
 end
 
+-- Marks a part as pure decoration: it can never block movement, eat Touched
+-- events, or swallow raycasts. Use for every new dressing prop.
+local function deco(p: BasePart): BasePart
+	p.CanCollide = false
+	p.CanTouch = false
+	p.CanQuery = false
+	return p
+end
+
+-- WedgePart twin of part() (same arg order: material 5th, parent 6th).
+local function wedge(
+	name: string,
+	size: Vector3,
+	cf: CFrame,
+	color: Color3,
+	material: Enum.Material?,
+	parent: Instance
+): WedgePart
+	local w = Instance.new("WedgePart")
+	w.Name = name
+	w.Anchored = true
+	w.Size = size
+	w.CFrame = cf
+	w.Color = color
+	w.Material = material or Enum.Material.SmoothPlastic
+	w.TopSurface = Enum.SurfaceType.Smooth
+	w.BottomSurface = Enum.SurfaceType.Smooth
+	w.Parent = parent
+	return w
+end
+
+-- Ball-shaped part (uniform diameter).
+local function ball(
+	name: string,
+	diameter: number,
+	cf: CFrame,
+	color: Color3,
+	material: Enum.Material?,
+	parent: Instance
+): Part
+	local p = part(name, Vector3.new(diameter, diameter, diameter), cf, color, material, parent)
+	p.Shape = Enum.PartType.Ball
+	return p
+end
+
+-- ===== Global lighting dressing =====
+
+-- Fetches (or creates) a named post-processing child of Lighting so repeated
+-- Build() calls never stack duplicate effects.
+local function lightingChild(className: string, name: string): Instance
+	local existing = Lighting:FindFirstChild(name)
+	if existing ~= nil and existing.ClassName == className then
+		return existing
+	end
+	if existing ~= nil then
+		existing:Destroy()
+	end
+	local inst = Instance.new(className)
+	inst.Name = name
+	inst.Parent = Lighting
+	return inst
+end
+
+-- Warm late-afternoon base look for the whole map: soft sun, light haze, a
+-- whisper of bloom and extra saturation. Idempotent — properties are simply
+-- (re)assigned and effect children are found by name. EventController
+-- snapshots whatever it overrides, so event skies restore back to this.
+local function dressLighting()
+	Lighting.ClockTime = 14.5
+	Lighting.Brightness = 2.6
+	Lighting.Ambient = Color3.fromRGB(105, 98, 88)
+	Lighting.OutdoorAmbient = Color3.fromRGB(143, 130, 108)
+	Lighting.EnvironmentDiffuseScale = 1
+	Lighting.EnvironmentSpecularScale = 1
+	Lighting.GlobalShadows = true
+	Lighting.ShadowSoftness = 0.35
+	Lighting.ExposureCompensation = 0.05
+
+	local atmosphere = lightingChild("Atmosphere", "HubAtmosphere") :: Atmosphere
+	atmosphere.Density = 0.3
+	atmosphere.Offset = 0.25
+	atmosphere.Color = Color3.fromRGB(214, 202, 186)
+	atmosphere.Decay = Color3.fromRGB(112, 118, 138)
+	atmosphere.Glare = 0.18
+	atmosphere.Haze = 1.4
+
+	local bloom = lightingChild("BloomEffect", "HubBloom") :: BloomEffect
+	bloom.Enabled = true
+	bloom.Intensity = 0.35
+	bloom.Size = 28
+	bloom.Threshold = 2
+
+	local grade = lightingChild("ColorCorrectionEffect", "HubColorGrade") :: ColorCorrectionEffect
+	grade.Enabled = true
+	grade.Saturation = 0.08
+	grade.Contrast = 0.03
+	grade.Brightness = 0
+	grade.TintColor = Color3.fromRGB(255, 251, 244)
+end
+
+-- ===== Festival dressing helpers (all pure decoration) =====
+
+-- A string of alternating pastel pennant flags strung between two world
+-- points, with a gentle sag in the middle.
+local function buildBunting(parent: Instance, from: Vector3, to: Vector3, flagCount: number)
+	local sag = 0.9
+	local mid = from:Lerp(to, 0.5) - Vector3.new(0, sag, 0)
+	for _, ends in { { from, mid }, { mid, to } } do
+		local a, b = ends[1], ends[2]
+		deco(part(
+			"BuntingString",
+			Vector3.new(0.1, 0.1, (b - a).Magnitude),
+			CFrame.lookAt(a:Lerp(b, 0.5), b),
+			PALETTE.signText,
+			nil,
+			parent
+		))
+	end
+	local flat = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
+	for i = 1, flagCount do
+		local t = i / (flagCount + 1)
+		local dip = sag * 4 * t * (1 - t)
+		local pos = from:Lerp(to, t) - Vector3.new(0, dip + 0.6, 0)
+		deco(wedge(
+			"BuntingFlag",
+			Vector3.new(0.12, 1.05, 0.85),
+			CFrame.lookAt(pos, pos + flat) * CFrame.Angles(math.rad(180), 0, 0),
+			KEYCAP_COLORS[(i - 1) % #KEYCAP_COLORS + 1],
+			Enum.Material.Fabric,
+			parent
+		))
+	end
+end
+
+-- Three pastel balloons on strings tied to a little wooden weight.
+local function buildBalloonCluster(parent: Instance, basePos: Vector3)
+	deco(part(
+		"BalloonWeight",
+		Vector3.new(0.9, 0.8, 0.9),
+		CFrame.new(basePos + Vector3.new(0, 0.4, 0)) * CFrame.Angles(0, math.rad(25), 0),
+		PALETTE.crateLid,
+		Enum.Material.WoodPlanks,
+		parent
+	))
+	local tie = basePos + Vector3.new(0, 0.8, 0)
+	local offsets = {
+		Vector3.new(-0.8, 5.6, 0.3),
+		Vector3.new(0.7, 6.5, -0.4),
+		Vector3.new(0.1, 7.3, 0.6),
+	}
+	for i, offset in offsets do
+		local balloonPos = basePos + offset
+		local knot = balloonPos - Vector3.new(0, 0.9, 0)
+		deco(part(
+			"BalloonString",
+			Vector3.new(0.06, 0.06, (knot - tie).Magnitude),
+			CFrame.lookAt(tie:Lerp(knot, 0.5), knot),
+			PALETTE.lampPost,
+			nil,
+			parent
+		))
+		deco(ball("Balloon", 2, CFrame.new(balloonPos), KEYCAP_COLORS[i * 2 - 1], nil, parent))
+	end
+end
+
+-- One chunky decorative keycap (cube + lighter top slab) resting on the
+-- ground at footCF (y = ground level).
+local function buildKeycapProp(parent: Instance, footCF: CFrame, size: number, color: Color3)
+	deco(part("PropKeycap", Vector3.new(size, size * 0.62, size), footCF * CFrame.new(0, size * 0.31, 0), color, nil, parent))
+	deco(part(
+		"PropKeycapTop",
+		Vector3.new(size * 0.7, size * 0.18, size * 0.7),
+		footCF * CFrame.new(0, size * 0.71, 0),
+		PALETTE.awningCream,
+		nil,
+		parent
+	))
+end
+
+-- Three little blossom balls half-sunk around `center` (pass the desired
+-- blossom-centre height). `seed` varies both spread and colors.
+local function buildFlowerPatch(parent: Instance, center: Vector3, seed: number)
+	for k = 0, 2 do
+		local a = seed * 1.7 + k * 2.1
+		local pos = center + Vector3.new(math.cos(a) * 0.9, 0.05 * k, math.sin(a) * 0.9)
+		deco(ball("Flower", 0.55 + 0.12 * k, CFrame.new(pos), KEYCAP_COLORS[(seed + k - 1) % #KEYCAP_COLORS + 1], nil, parent))
+	end
+end
+
+-- A wooden planter box with soil and blossoms — landmark base dressing.
+local function buildPlanter(parent: Instance, footCF: CFrame, seed: number)
+	deco(part("PlanterBox", Vector3.new(2.6, 1, 2.6), footCF * CFrame.new(0, 0.5, 0), PALETTE.wood, Enum.Material.WoodPlanks, parent))
+	deco(part("PlanterSoil", Vector3.new(2.2, 0.3, 2.2), footCF * CFrame.new(0, 1, 0), PALETTE.crateLid, Enum.Material.Ground, parent))
+	buildFlowerPatch(parent, (footCF * CFrame.new(0, 1.35, 0)).Position, seed)
+end
+
+-- A tiny warm neon ground puck with a SpotLight washing up a landmark.
+local function buildUplight(parent: Instance, position: Vector3)
+	local base = part("Uplight", Vector3.new(1.1, 0.3, 1.1), CFrame.new(position + Vector3.new(0, 0.15, 0)), PALETTE.lampGlow, Enum.Material.Neon, parent)
+	deco(base)
+	local beam = Instance.new("SpotLight")
+	beam.Face = Enum.NormalId.Top
+	beam.Angle = 70
+	beam.Range = 24
+	beam.Brightness = 1.2
+	beam.Color = PALETTE.lampGlow
+	beam.Parent = base
+end
+
 -- Horizontal unit direction toward plot i, plus the distance to its centre.
 local function plotDirection(plotIndex: number): (Vector3, number)
 	local center = PlotBuilder.GetPlotCFrame(plotIndex).Position
@@ -161,7 +377,7 @@ local function buildBench(hub: Model, cf: CFrame)
 	part("BenchLeg", Vector3.new(0.6, 1.2, 1.5), cf * CFrame.new(2, 0.6, 0), PALETTE.wood, Enum.Material.WoodPlanks, hub)
 end
 
-local function buildLamp(hub: Model, position: Vector3)
+local function buildLamp(hub: Model, position: Vector3, fireflies: boolean?)
 	local cf = CFrame.new(position)
 	cylinder("LampPost", 6, 0.7, cf * CFrame.new(0, 3, 0), PALETTE.lampPost, nil, hub)
 	local head = part("LampHead", Vector3.new(1.1, 1.1, 1.1), cf * CFrame.new(0, 6.4, 0), PALETTE.lampGlow, Enum.Material.Neon, hub)
@@ -170,6 +386,27 @@ local function buildLamp(hub: Model, position: Vector3)
 	light.Range = 18
 	light.Brightness = 0.8
 	light.Parent = head
+
+	-- A few lamps get slow drifting "fireflies" — soft, sparse motes that
+	-- fade in and out around the glow.
+	if fireflies then
+		local drift = Instance.new("ParticleEmitter")
+		drift.Color = ColorSequence.new(PALETTE.lampGlow)
+		drift.LightEmission = 1
+		drift.LightInfluence = 0
+		drift.Size = NumberSequence.new(0.15)
+		drift.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.2, 0.2),
+			NumberSequenceKeypoint.new(0.8, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		drift.Lifetime = NumberRange.new(3, 6)
+		drift.Rate = 2
+		drift.Speed = NumberRange.new(0.3, 0.7)
+		drift.SpreadAngle = Vector2.new(180, 180)
+		drift.Parent = head
+	end
 end
 
 local function buildBigSign(hub: Model)
@@ -216,6 +453,13 @@ local function buildBigSign(hub: Model)
 			hub
 		)
 	end
+
+	-- Flower planters at each post's foot + a soft uplight washing the board
+	-- (local -Z faces the plaza, so the dressing sits in front of the posts).
+	for i, x in { -10.8, 10.8 } do
+		buildPlanter(hub, frameCF * CFrame.new(x, PLAZA_TOP_Y, -1.6) * CFrame.Angles(0, math.rad(i * 30), 0), i * 3)
+	end
+	buildUplight(hub, (frameCF * CFrame.new(0, PLAZA_TOP_Y, -2.6)).Position)
 end
 
 local function buildMonument(hub: Model)
@@ -226,6 +470,17 @@ local function buildMonument(hub: Model)
 
 	cylinder("MonumentBase", 1.4, 11, CFrame.new(basePos + Vector3.new(0, 0.9, 0)), PALETTE.pedestal, nil, hub)
 	cylinder("MonumentColumn", 1.2, 8, CFrame.new(basePos + Vector3.new(0, 2.2, 0)), PALETTE.plaza, nil, hub)
+
+	-- Landmark dressing: a gold trim skirt around the base, three flower
+	-- planters ringing it, and a soft uplight framing the photo spot. All
+	-- pure decoration — the climbable base/column keep their collision.
+	deco(cylinder("MonumentTrim", 0.3, 11.8, CFrame.new(basePos + Vector3.new(0, 0.35, 0)), PALETTE.boardGold, Enum.Material.Metal, hub))
+	local right = Vector3.new(-direction.Z, 0, direction.X)
+	for i, offset in { right * 7.4, -right * 7.4, direction * 7.4 } do
+		local pos = basePos + offset
+		buildPlanter(hub, CFrame.new(pos.X, PLAZA_TOP_Y, pos.Z) * CFrame.Angles(0, i * 0.9, 0), i + 1)
+	end
+	buildUplight(hub, basePos - direction * 7.2 + Vector3.new(0, PLAZA_TOP_Y, 0))
 
 	local def = Catalog.GetKeyboard(MONUMENT_KEYBOARD_ID)
 	if def ~= nil then
@@ -438,6 +693,20 @@ local function buildCrateStall(hubFolder: Folder)
 	buildCrate(stall, footCF * CFrame.new(1.6, 3.5, -1.5) * CFrame.Angles(0, math.rad(-30), 0), 1.4, PALETTE.boardGold)
 	buildCrate(stall, footCF * CFrame.new(5.6, 1.4, -2.2) * CFrame.Angles(0, math.rad(40), 0), 2.4, PALETTE.crateWood)
 
+	-- Festival dressing: a red rug in front of the counter, spilled keycap
+	-- props, a balloon cluster beside the big crate, and pennant bunting
+	-- strung between the front posts. All pure decoration.
+	deco(part("StallRug", Vector3.new(7.5, 0.14, 4), footCF * CFrame.new(0, 0.07, -4.4), PALETTE.awningRed, Enum.Material.Fabric, stall))
+	buildKeycapProp(stall, footCF * CFrame.new(-5.9, 0, -2.1) * CFrame.Angles(0, math.rad(24), 0), 1.5, KEYCAP_COLORS[3])
+	buildKeycapProp(stall, footCF * CFrame.new(-6.3, 0, -0.1) * CFrame.Angles(0, math.rad(-12), 0), 1.1, KEYCAP_COLORS[1])
+	buildBalloonCluster(stall, (footCF * CFrame.new(7.6, 0, -3.4)).Position)
+	buildBunting(
+		stall,
+		(footCF * CFrame.new(-4.55, 7.4, -2.6)).Position,
+		(footCF * CFrame.new(4.55, 7.4, -2.6)).Position,
+		6
+	)
+
 	-- Back board with the title + live countdown (RestockShopService writes
 	-- the "Countdown" label text every second).
 	local board = part("Board", Vector3.new(9.2, 5, 0.4), footCF * CFrame.new(0, 5.1, 2.35), PALETTE.signBoard, Enum.Material.WoodPlanks, stall)
@@ -567,6 +836,20 @@ local function buildKeycrateShop(hubFolder: Folder)
 	buildCrate(kiosk, footCF * CFrame.new(-2.2, 3.6, -1.4) * CFrame.Angles(0, math.rad(20), 0), 1.6, PALETTE.robuxGreen)
 	buildCrate(kiosk, footCF * CFrame.new(1.9, 3.5, -1.3) * CFrame.Angles(0, math.rad(-25), 0), 1.4, PALETTE.boardGold)
 
+	-- Festival dressing: a dark-green rug under the shop pad, keycap props
+	-- flanking it, balloons beside the kiosk, and bunting across the front
+	-- posts. All pure decoration; the rug stays well below the pad's top.
+	deco(part("KioskRug", Vector3.new(8.4, 0.12, 7.8), footCF * CFrame.new(0, 0.06, -4.6), PALETTE.robuxDark, Enum.Material.Fabric, kiosk))
+	buildKeycapProp(kiosk, footCF * CFrame.new(-4.9, 0, -2.4) * CFrame.Angles(0, math.rad(30), 0), 1.5, PALETTE.robuxGreen)
+	buildKeycapProp(kiosk, footCF * CFrame.new(4.8, 0, -1.9) * CFrame.Angles(0, math.rad(-18), 0), 1.2, KEYCAP_COLORS[2])
+	buildBalloonCluster(kiosk, (footCF * CFrame.new(-6.6, 0, -3.2)).Position)
+	buildBunting(
+		kiosk,
+		(footCF * CFrame.new(-3.55, 7, -2.5)).Position,
+		(footCF * CFrame.new(3.55, 7, -2.5)).Position,
+		5
+	)
+
 	-- Floating title above the keycap.
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "Label"
@@ -685,6 +968,23 @@ local function buildFusionForge(hubFolder: Folder)
 	part("LeverHandle", Vector3.new(0.35, 2.4, 0.35), handleCF, PALETTE.wood, Enum.Material.WoodPlanks, forge)
 	part("LeverKnob", Vector3.new(0.75, 0.75, 0.75), handleCF * CFrame.new(0, 1.35, 0), PALETTE.boardGold, Enum.Material.Neon, forge)
 
+	-- Cozy dressing: a dark rug under the forge pad, a keycap "fuel" prop
+	-- behind the lever, and a little coal pile beside the hearth. All pure
+	-- decoration; the rug stays well below the pad's top.
+	deco(part("ForgeRug", Vector3.new(8.4, 0.12, 7.8), footCF * CFrame.new(0, 0.06, -4.8), PALETTE.forgeIron, Enum.Material.Fabric, forge))
+	buildKeycapProp(forge, footCF * CFrame.new(5.4, 0, 1.4) * CFrame.Angles(0, math.rad(35), 0), 1.4, KEYCAP_COLORS[4])
+	for k = 1, 3 do
+		local a = k * 2.3
+		deco(ball(
+			"Coal",
+			1 - k * 0.15,
+			footCF * CFrame.new(-4.3 + math.cos(a) * 0.7, 0.3, 1.6 + math.sin(a) * 0.7),
+			PALETTE.forgeIron,
+			Enum.Material.Slate,
+			forge
+		))
+	end
+
 	-- Floating title above the crucible.
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "Label"
@@ -756,6 +1056,9 @@ function HubBuilder.BuildLeaderboards(): (Part, Part)
 end
 
 function HubBuilder.Build(): Model
+	-- Global look first — one call dresses Lighting for the whole map.
+	dressLighting()
+
 	local hubFolder = getHubFolder()
 	local existing = hubFolder:FindFirstChild("HubIsland")
 	if existing ~= nil then
@@ -776,6 +1079,24 @@ function HubBuilder.Build(): Model
 	cylinder("GrassRing", 0.8, GRASS_RADIUS * 2, CFrame.new(0, -0.6, 0), PALETTE.grassRing, Enum.Material.Grass, hub)
 	local plaza = cylinder("Plaza", 1.2, PLAZA_RADIUS * 2, CFrame.new(0, -0.4, 0), PALETTE.plaza, nil, hub)
 
+	-- Concentric plaza dressing (all flat pure-decoration overlays): a stone
+	-- rim skirting the plaza edge, a thin gold trim circle, an inner accent
+	-- disc, and a ring of pastel "keycap" tiles circling the spawn.
+	deco(cylinder("PlazaRim", 0.5, PLAZA_RADIUS * 2 + 5, CFrame.new(0, -0.17, 0), PALETTE.pedestal, Enum.Material.Slate, hub))
+	deco(cylinder("PlazaTrim", 0.1, 29.6, CFrame.new(0, 0.17, 0), PALETTE.boardGold, Enum.Material.Metal, hub))
+	deco(cylinder("PlazaAccent", 0.12, 28, CFrame.new(0, PLAZA_TOP_Y, 0), PALETTE.plazaAccent, Enum.Material.Slate, hub))
+	for i = 1, 12 do
+		local a = i * math.pi / 6
+		deco(part(
+			"PlazaKeycap",
+			Vector3.new(2.6, 0.24, 2.6),
+			CFrame.new(math.cos(a) * 11.5, 0.32, math.sin(a) * 11.5) * CFrame.Angles(0, -a + math.rad(8), 0),
+			KEYCAP_COLORS[(i - 1) % #KEYCAP_COLORS + 1],
+			nil,
+			hub
+		))
+	end
+
 	-- Paths radiating to each plot's front edge (shared ring math).
 	for plotIndex = 1, GameConfig.PlotCount do
 		local direction, distance = plotDirection(plotIndex)
@@ -789,11 +1110,29 @@ function HubBuilder.Build(): Model
 				Vector3.new(direction.X * outerR, -0.15, direction.Z * outerR)
 			)
 			part("Path", Vector3.new(6, 0.5, length), cf, PALETTE.path, nil, hub)
+
+			-- Flat overlay strip carrying the path across the plaza toward the
+			-- spawn (pure decoration, so it never eats raycasts or touches).
+			local stripInner, stripOuter = 15, PLAZA_RADIUS - 0.5
+			local stripMid = direction * ((stripInner + stripOuter) / 2)
+			deco(part(
+				"PlazaPath",
+				Vector3.new(3.6, 0.12, stripOuter - stripInner),
+				CFrame.lookAt(
+					Vector3.new(stripMid.X, PLAZA_TOP_Y, stripMid.Z),
+					Vector3.new(direction.X * stripOuter, PLAZA_TOP_Y, direction.Z * stripOuter)
+				),
+				PALETTE.path,
+				nil,
+				hub
+			))
 		end
 	end
 
 	-- Cozy dressing on the grass ring, offset half a step so nothing sits on
-	-- a path.
+	-- a path. Bench slots now ALSO get a lamp behind them (except behind the
+	-- big sign, where it would be hidden); lamp slots get festival bunting
+	-- strung back to the tree behind, and a few lamps get firefly motes.
 	local step = math.pi * 2 / math.max(GameConfig.PlotCount, 1)
 	for i = 1, GameConfig.PlotCount do
 		local angle = (i - 0.5) * step
@@ -802,8 +1141,26 @@ function HubBuilder.Build(): Model
 		if i % 2 == 1 then
 			local benchPos = direction * 34
 			buildBench(hub, CFrame.lookAt(Vector3.new(benchPos.X, 0.2, benchPos.Z), Vector3.new(0, 0.2, 0)))
+			if i ~= 7 then
+				buildLamp(hub, direction * 40.5 + Vector3.new(0, 0.2, 0), i == 3)
+			end
 		else
-			buildLamp(hub, direction * 40.5 + Vector3.new(0, 0.2, 0))
+			buildLamp(hub, direction * 40.5 + Vector3.new(0, 0.2, 0), i == 2 or i == 6)
+			buildBunting(hub, direction * 40.5 + Vector3.new(0, 6.5, 0), direction * 48.8 + Vector3.new(0, 5.9, 0), 5)
+		end
+	end
+
+	-- Second tree row flanking each plot path, plus little flower patches —
+	-- fills the outer grass ring's empty gaps.
+	for plotIndex = 1, GameConfig.PlotCount do
+		local direction = plotDirection(plotIndex)
+		local baseAngle = math.atan2(direction.Z, direction.X)
+		local side = if plotIndex % 2 == 0 then 1 else -1
+		local treeAngle = baseAngle + side * 0.17
+		buildTree(hub, Vector3.new(math.cos(treeAngle) * 53.5, 0, math.sin(treeAngle) * 53.5), treeAngle * 2)
+		if plotIndex % 2 == 0 then
+			local flowerAngle = baseAngle - 0.32
+			buildFlowerPatch(hub, Vector3.new(math.cos(flowerAngle) * 45, 0.05, math.sin(flowerAngle) * 45), plotIndex)
 		end
 	end
 

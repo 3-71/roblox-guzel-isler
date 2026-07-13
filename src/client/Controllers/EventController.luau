@@ -44,6 +44,11 @@ local bannerShown = false
 
 -- exact pre-event value of every Lighting property we've touched
 local lightingSnapshot: { [string]: any } = {}
+-- same, for the hub's Atmosphere child: with an Atmosphere instance present
+-- the engine IGNORES classic FogColor/FogEnd, so storm/golden moods must be
+-- driven through Atmosphere properties instead (the fog goals below stay as
+-- a fallback for places without the Atmosphere).
+local atmosphereSnapshot: { [string]: any } = {}
 
 -- ===== helpers =====
 
@@ -81,6 +86,25 @@ local function presetGoals(sky: string): { [string]: any }
 	return {}
 end
 
+local function atmospherePresetGoals(sky: string): { [string]: any }
+	if sky == "storm" then
+		return {
+			Density = 0.42,
+			Color = Color3.fromRGB(140, 148, 178),
+			Decay = Color3.fromRGB(24, 30, 56),
+			Haze = 2.6,
+			Glare = 0,
+		}
+	elseif sky == "golden" then
+		return {
+			Color = Color3.fromRGB(226, 186, 128),
+			Haze = 1.8,
+			Glare = 0.32,
+		}
+	end
+	return {}
+end
+
 local function applyLighting(def: typeof(Events[1]))
 	local goals = presetGoals(def.sky)
 	-- snapshot anything we haven't touched yet (never overwrite an original)
@@ -98,14 +122,36 @@ local function applyLighting(def: typeof(Events[1]))
 		end
 	end
 	TweenService:Create(Lighting, TRANSITION_INFO, combined):Play()
+
+	local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+	if atmosphere then
+		local atmosphereGoals = atmospherePresetGoals(def.sky)
+		for prop in atmosphereGoals do
+			if atmosphereSnapshot[prop] == nil then
+				atmosphereSnapshot[prop] = (atmosphere :: any)[prop]
+			end
+		end
+		local combinedAtmosphere: { [string]: any } = table.clone(atmosphereGoals)
+		for prop, original in atmosphereSnapshot do
+			if combinedAtmosphere[prop] == nil then
+				combinedAtmosphere[prop] = original
+			end
+		end
+		TweenService:Create(atmosphere, TRANSITION_INFO, combinedAtmosphere):Play()
+	end
 end
 
 local function restoreLighting()
-	if next(lightingSnapshot) == nil then
+	if next(lightingSnapshot) == nil and next(atmosphereSnapshot) == nil then
 		return
 	end
 	local goals: { [string]: any } = table.clone(lightingSnapshot)
 	TweenService:Create(Lighting, TRANSITION_INFO, goals):Play()
+	local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+	local atmosphereGoals: { [string]: any } = table.clone(atmosphereSnapshot)
+	if atmosphere and next(atmosphereGoals) ~= nil then
+		TweenService:Create(atmosphere, TRANSITION_INFO, atmosphereGoals):Play()
+	end
 	local mySession = session
 	task.delay(TRANSITION_SECONDS + 0.1, function()
 		-- only finalize if no new event started while we were restoring;
@@ -116,7 +162,13 @@ local function restoreLighting()
 		for prop, value in goals do
 			(Lighting :: any)[prop] = value
 		end
+		if atmosphere and atmosphere.Parent then
+			for prop, value in atmosphereGoals do
+				(atmosphere :: any)[prop] = value
+			end
+		end
 		table.clear(lightingSnapshot)
+		table.clear(atmosphereSnapshot)
 	end)
 end
 
