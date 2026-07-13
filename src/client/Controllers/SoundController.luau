@@ -108,7 +108,7 @@ end
 -- client-side throttle mirroring the server's rate limit
 local lastTypeSent = 0
 
-local function onTypingInput()
+local function onTypingInput(letter: string?)
 	if UserInputService:GetFocusedTextBox() then
 		return
 	end
@@ -132,7 +132,9 @@ local function onTypingInput()
 	local now = os.clock()
 	if now - lastTypeSent >= 1 / GameConfig.TypeRateLimitPerSecond then
 		lastTypeSent = now
-		Remotes.TypeKeyRequest:FireServer()
+		-- letter feeds SecretService's ritual buffer (type T-H-O-C-K...);
+		-- the server treats anything non-alphanumeric as nil.
+		Remotes.TypeKeyRequest:FireServer(letter)
 	end
 end
 
@@ -162,11 +164,17 @@ function SoundController.Start()
 		if gameProcessed then
 			return
 		end
-		if input.UserInputType == Enum.UserInputType.Keyboard
-			or input.UserInputType == Enum.UserInputType.MouseButton1
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			-- KeyCode names for letter/digit keys are single characters
+			-- ("A".."Z", "0".."9" come through as "Zero".."Nine", so only
+			-- letters ride along — plenty for the rituals).
+			local keyName = input.KeyCode.Name
+			onTypingInput(if #keyName == 1 then keyName else nil)
+		elseif
+			input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch
 		then
-			onTypingInput()
+			onTypingInput(nil)
 		end
 	end)
 end

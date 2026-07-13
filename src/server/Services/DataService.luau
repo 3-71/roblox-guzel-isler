@@ -71,6 +71,8 @@ local function defaultProfile(): Types.Profile
 		rebirths = 0,
 		indexClaimed = {},
 		likesReceived = 0,
+		likesGiven = 0,
+		setsClaimed = {},
 		passes = {},
 		boosts = {},
 		pity = 0,

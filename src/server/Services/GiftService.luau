@@ -6,9 +6,10 @@
 --     - rate limit: 1 request per 2s per sender (excess dropped silently)
 --     - target must be online in this server with a loaded profile and room
 --       in their inventory (GameConfig.InventoryCap)
---     - uid must be owned by the sender, not equipped, not on display
---     - transfer moves THE SAME instance table (uid/id/mutation/obtainedAt
---       preserved): InventoryService.RemoveKeyboards(sender, {uid}) then
+--     - uid must be owned by the sender, not equipped, not on display, and
+--       not vault-locked (instance.locked, Phase 4)
+--     - transfer moves THE SAME instance table (uid/id/mutation/obtainedAt/
+--       stars/ageSeconds preserved): InventoryService.RemoveKeyboards(sender, {uid}) then
 --       append to the target's profile.keyboards + collection bump +
 --       KeyboardCollected(source = "gift") to the target
 --     - Notify both players; server-wide flex for tier >= GlobalFlexMinTier
@@ -92,6 +93,10 @@ local function onGiftRequest(sender: Player, targetUserId: unknown, uid: unknown
 			return
 		end
 	end
+	if instance.locked then
+		Remotes.Notify:FireClient(sender, "error", "That keyboard is locked in your vault. Unlock it before gifting.")
+		return
+	end
 
 	local def = Catalog.GetKeyboard(instance.id)
 	if def == nil then
@@ -121,8 +126,17 @@ local function onGiftRequest(sender: Player, targetUserId: unknown, uid: unknown
 		rarityTier = def.rarityTier,
 		source = "gift",
 		mutation = gifted.mutation,
+		stars = gifted.stars,
 	}
 	Remotes.KeyboardCollected:FireClient(target, payload)
+
+	-- The gift bumped the target's collection outside AddKeyboard, so run the
+	-- same lazy sets check AddKeyboard ends with — a gift can complete a set.
+	-- pcall keeps the edge soft (see InventoryService.checkSets).
+	pcall(function()
+		local SetsService = require(script.Parent.SetsService) :: any
+		SetsService.CheckSets(target)
+	end)
 
 	Remotes.Notify:FireClient(sender, "info", `You gifted {def.name} to {target.Name}!`)
 	Remotes.Notify:FireClient(target, "info", `{sender.Name} gifted you {def.name}!`)

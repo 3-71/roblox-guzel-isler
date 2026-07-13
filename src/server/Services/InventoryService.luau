@@ -2,17 +2,26 @@
 -- InventoryService — the single owner of profile.keyboards mutations.
 --
 -- Contract (ARCHITECTURE.md):
---   AddKeyboard(player, keyboardId, source) -> Types.KeyboardInstance?
+--   AddKeyboard(player, keyboardId, source, mutation?, stars?) -> Types.KeyboardInstance?
 --     nil at InventoryCap / unknown id / no profile. Fires KeyboardCollected
 --     to the owner and, for high tiers / huge mutations, a server-wide "flex"
 --     Notify plus the GlobalRoll spectacle payload to ALL clients (Phase 3).
+--     stars (Phase 4, FusionService) is stored on the instance and carried in
+--     the CollectedPayload. Every successful add ends with a
+--     SetsService.CheckSets pass (lazy pcall require — see checkSets below)
+--     so a collect can auto-claim a completed themed set.
 --   RemoveKeyboards(player, uids) -> { Types.KeyboardInstance }
 --     removes & returns matches; unequips/undisplays any removed uid.
 --   GetKeyboard(player, uid) -> Types.KeyboardInstance?
+--   VaultRequest remote (uid: string, locked: boolean), Phase 4: toggles
+--     instance.locked (stored as true or nil, never false). Locked instances
+--     are excluded from selling/gifting/fusing by those flows' owners.
+--     Rate limit: 3/s token bucket per player; excess dropped silently.
 --
 -- Every mutating call does exactly one MarkDirty + Sync (batched).
 
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.Shared
@@ -67,7 +76,27 @@ local function findPlotIndex(player: Player): number
 	return 0
 end
 
-function InventoryService.AddKeyboard(player: Player, keyboardId: string, source: string, mutation: string?): Types.KeyboardInstance?
+-- Runs SetsService.CheckSets after a collect. SetsService is required
+-- lazily inside a pcall (contract): a top-level require would work today,
+-- but the soft edge guarantees AddKeyboard can never break if the module
+-- is missing or not yet loaded during bootstrap — the pcall just no-ops
+-- and the OnProfileLoaded pass inside SetsService catches up on join.
+local setsService: any = nil
+
+local function checkSets(player: Player)
+	if setsService == nil then
+		local ok, result = pcall(function()
+			return require(script.Parent.SetsService) :: any
+		end)
+		if not ok then
+			return
+		end
+		setsService = result
+	end
+	setsService.CheckSets(player)
+end
+
+function InventoryService.AddKeyboard(player: Player, keyboardId: string, source: string, mutation: string?, stars: number?): Types.KeyboardInstance?
 	local profile = DataService.GetProfile(player)
 	if profile == nil then
 		return nil -- player left or profile not loaded yet
@@ -84,11 +113,18 @@ function InventoryService.AddKeyboard(player: Player, keyboardId: string, source
 	end
 
 	local mutationDef = Catalog.GetMutation(mutation)
+	-- stars come only from trusted server callers (FusionService), but are
+	-- still sanitized: whole number, 1..MaxStars, nil for unstarred.
+	local starCount: number? = nil
+	if stars ~= nil and stars >= 1 then
+		starCount = math.min(math.floor(stars), GameConfig.Fusion.MaxStars)
+	end
 	local instance: Types.KeyboardInstance = {
 		uid = HttpService:GenerateGUID(false),
 		id = def.id,
 		obtainedAt = os.time(),
 		mutation = if mutationDef then mutationDef.id else nil,
+		stars = starCount,
 	}
 	table.insert(profile.keyboards, instance)
 	profile.collection[def.id] = (profile.collection[def.id] or 0) + 1
@@ -102,6 +138,7 @@ function InventoryService.AddKeyboard(player: Player, keyboardId: string, source
 		rarityTier = def.rarityTier,
 		source = source,
 		mutation = instance.mutation,
+		stars = instance.stars,
 	}
 	Remotes.KeyboardCollected:FireClient(player, payload)
 
@@ -132,6 +169,9 @@ function InventoryService.AddKeyboard(player: Player, keyboardId: string, source
 			})
 		end
 	end
+
+	-- Phase 4: this collect may have just completed a themed set.
+	checkSets(player)
 
 	return instance
 end
@@ -200,11 +240,66 @@ function InventoryService.GetKeyboard(player: Player, uid: string): Types.Keyboa
 	return nil
 end
 
+-- ===== Vault (Phase 4) =====
+
+local VAULT_RATE_PER_SECOND = 3 -- contract: 3 VaultRequests/sec per player
+
+-- token bucket per player for VaultRequest
+local vaultTokens: { [Player]: { tokens: number, last: number } } = {}
+
+local function takeVaultToken(player: Player): boolean
+	local bucket = vaultTokens[player]
+	local now = os.clock()
+	if not bucket then
+		bucket = { tokens = 3, last = now }
+		vaultTokens[player] = bucket
+	end
+	bucket.tokens = math.min(3, bucket.tokens + (now - bucket.last) * VAULT_RATE_PER_SECOND)
+	bucket.last = now
+	if bucket.tokens < 1 then
+		return false
+	end
+	bucket.tokens -= 1
+	return true
+end
+
+local function onVaultRequest(player: Player, uid: unknown, locked: unknown)
+	if not takeVaultToken(player) then
+		return -- rate limited: drop silently
+	end
+	-- Type validation: nothing on the client's word.
+	if typeof(uid) ~= "string" or typeof(locked) ~= "boolean" then
+		return
+	end
+	local profile = DataService.GetProfile(player)
+	if profile == nil then
+		return
+	end
+	for _, instance in profile.keyboards do
+		if instance.uid == uid then
+			-- Store true or nil, never false — no need to persist the default.
+			local newLocked: boolean? = if locked then true else nil
+			if instance.locked ~= newLocked then
+				instance.locked = newLocked
+				DataService.MarkDirty(player)
+				DataService.Sync(player)
+			end
+			return
+		end
+	end
+	-- Unowned uid: silently ignored (client UI only offers owned instances).
+end
+
 function InventoryService.Init()
-	-- Pure API service: everything happens through the functions above.
+	-- Pure API service plus the VaultRequest remote (connected in Start).
 end
 
 function InventoryService.Start()
+	Remotes.VaultRequest.OnServerEvent:Connect(onVaultRequest)
+
+	Players.PlayerRemoving:Connect(function(player)
+		vaultTokens[player] = nil
+	end)
 end
 
 return InventoryService

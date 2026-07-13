@@ -2,6 +2,13 @@
 -- Showcase: display stands at the front of each plot. Owners put keyboards
 -- on stands via DisplayRequest; visitors can look (nameplate + model) but
 -- deliberately cannot interact — flexing only.
+--
+-- Aging (Phase 4): DISPLAYED keyboards accrue ageSeconds while their owner is
+-- online — a loop every GameConfig.Aging.TickSeconds adds TickSeconds to each
+-- displayed instance. MarkDirty every tick, but Sync (and stand re-render)
+-- ONLY when an instance crosses an age-stage boundary (Catalog.GetAgeStage),
+-- so the loop never becomes a per-minute full-profile broadcast. Aged stands
+-- render with the patina model pass plus a gold " · <stage>" nameplate suffix.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -39,6 +46,22 @@ local function clearStandVisual(player: Player, standIndex: number)
 	end
 end
 
+-- 1-based index into GameConfig.Aging.Stages the instance has reached — the
+-- numeric twin of Catalog.GetAgeStage, for KeyboardModel.Build's ageStage arg.
+-- nil below the first threshold (or never displayed).
+local function ageStageIndex(ageSeconds: number?): number?
+	if not ageSeconds then
+		return nil
+	end
+	local reached: number? = nil
+	for index, stage in GameConfig.Aging.Stages do
+		if ageSeconds >= stage.seconds then
+			reached = index
+		end
+	end
+	return reached
+end
+
 local function renderStand(player: Player, profile: Types.Profile, standIndex: number)
 	clearStandVisual(player, standIndex)
 
@@ -66,7 +89,7 @@ local function renderStand(player: Player, profile: Types.Profile, standIndex: n
 	end
 
 	local mutationDef = Catalog.GetMutation(instance.mutation)
-	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.7, mutationDef)
+	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.7, mutationDef, ageStageIndex(instance.ageSeconds), instance.stars)
 	if not ok or typeof(model) ~= "Instance" then
 		return
 	end
@@ -88,6 +111,12 @@ local function renderStand(player: Player, profile: Types.Profile, standIndex: n
 		nameLabel.TextColor3 = rarity.color
 		nameLabel.TextStrokeTransparency = 0.3
 		nameLabel.Text = def.name
+		-- Aged boards flex their stage in gold next to the name.
+		local ageStage = Catalog.GetAgeStage(instance.ageSeconds)
+		if ageStage then
+			nameLabel.RichText = true
+			nameLabel.Text = def.name .. `<font color="#FFC94A"> · {ageStage.name}</font>`
+		end
 		nameLabel.Parent = gui
 		local rarityLabel = Instance.new("TextLabel")
 		rarityLabel.Position = UDim2.fromScale(0, 0.6)
@@ -217,6 +246,46 @@ function ShowcaseService.Start()
 		-- models live under the plot (destroyed with it); just drop references
 		displayedModels[player] = nil
 		displayTokens[player] = nil
+	end)
+
+	-- Aging loop: every tick, every online player's displayed instances gain
+	-- TickSeconds of age. One Sync per player per tick AT MOST, and only when
+	-- an instance crossed a stage boundary — MarkDirty alone otherwise, the
+	-- autosave picks the counters up silently.
+	task.spawn(function()
+		while true do
+			task.wait(GameConfig.Aging.TickSeconds)
+			for _, player in Players:GetPlayers() do
+				local profile = DataService.GetProfile(player)
+				if profile then
+					local aged = false
+					local crossedStands: { number } = {}
+					for standKey, uid in profile.displayed do
+						local instance = InventoryService.GetKeyboard(player, uid)
+						if instance then
+							local before = Catalog.GetAgeStage(instance.ageSeconds)
+							instance.ageSeconds = (instance.ageSeconds or 0) + GameConfig.Aging.TickSeconds
+							aged = true
+							if Catalog.GetAgeStage(instance.ageSeconds) ~= before then
+								local standIndex = tonumber(standKey)
+								if standIndex then
+									table.insert(crossedStands, standIndex)
+								end
+							end
+						end
+					end
+					if aged then
+						DataService.MarkDirty(player)
+					end
+					if #crossedStands > 0 then
+						DataService.Sync(player)
+						for _, standIndex in crossedStands do
+							renderStand(player, profile, standIndex)
+						end
+					end
+				end
+			end
+		end
 	end)
 end
 

@@ -7,10 +7,13 @@
 --                                          so money can never go negative
 --   SellRequest remote: mode "uids" (array of uids, max 50) or "belowTier"
 --     (number 1..#Rarities — sells every keyboard with rarityTier < N).
---     Equipped and displayed keyboards never sell. Value comes from
---     Catalog.GetSellValue at the player's CURRENT factory tier. Every uid is
---     resolved against the server profile — nothing on the client's word.
---     Rate limit 2 requests/sec per player; excess dropped silently.
+--     Equipped, displayed and vault-locked (instance.locked, Phase 4)
+--     keyboards never sell, in either mode. Value comes from
+--     Catalog.GetSellValue at the player's CURRENT factory tier, including
+--     the instance's fusion stars and display-aging ageSeconds (Phase 4).
+--     Every uid is resolved against the server profile — nothing on the
+--     client's word. Rate limit 2 requests/sec per player; excess dropped
+--     silently.
 --   leaderstats.Money IntValue created on profile load, kept in sync.
 --
 -- Phase 3:
@@ -261,6 +264,7 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 	end
 
 	-- Equipped or displayed keyboards are never sellable, in either mode.
+	-- Vault-locked instances (Phase 4) are checked per-instance below.
 	local excluded: { [string]: boolean } = {}
 	if profile.equippedUid ~= nil then
 		excluded[profile.equippedUid] = true
@@ -289,7 +293,7 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 		end
 		-- Resolve against the server profile: only uids we actually own count.
 		for _, instance in profile.keyboards do
-			if requested[instance.uid] and not excluded[instance.uid] then
+			if requested[instance.uid] and not excluded[instance.uid] and not instance.locked then
 				table.insert(toSell, instance.uid)
 			end
 		end
@@ -302,7 +306,7 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 			return
 		end
 		for _, instance in profile.keyboards do
-			if not excluded[instance.uid] then
+			if not excluded[instance.uid] and not instance.locked then
 				local def = Catalog.GetKeyboard(instance.id)
 				if def ~= nil and def.rarityTier < tier then
 					table.insert(toSell, instance.uid)
@@ -330,15 +334,18 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 	local bestValue = 0
 	local mutationBonus = 0
 	for _, instance in removed do
-		local value = Catalog.GetSellValue(instance.id, factoryTier, instance.mutation, profile.rebirths)
+		local value =
+			Catalog.GetSellValue(instance.id, factoryTier, instance.mutation, profile.rebirths, instance.stars, instance.ageSeconds)
 		total += value
 		if bestId == nil or value > bestValue then
 			bestId = instance.id
 			bestValue = value
 		end
 		if instance.mutation ~= nil then
-			-- Extra earned from the mutation vs the same keyboard unmutated.
-			local baseValue = Catalog.GetSellValue(instance.id, factoryTier, nil, profile.rebirths)
+			-- Extra earned from the mutation vs the same keyboard unmutated
+			-- (stars/age kept equal on both sides so the delta is pure mutation).
+			local baseValue =
+				Catalog.GetSellValue(instance.id, factoryTier, nil, profile.rebirths, instance.stars, instance.ageSeconds)
 			mutationBonus += value - baseValue
 		end
 	end

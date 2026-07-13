@@ -25,7 +25,9 @@ local characterConns: { [Player]: RBXScriptConnection } = {}
 local typeTokens: { [Player]: { tokens: number, last: number } } = {}
 local equipTokens: { [Player]: { tokens: number, last: number } } = {}
 -- subscribers to accepted typing keypresses (see OnTypeAccepted)
-local typeAcceptedCallbacks: { (Player) -> () } = {}
+local typeAcceptedCallbacks: { (Player, string?) -> () } = {}
+-- subscribers to explicit unequips (see OnUnequipped)
+local unequippedCallbacks: { (Player) -> () } = {}
 -- Typing income accrues here and is flushed through EconomyService.AddMoney
 -- once per GameConfig.TypingIncome.FlushSeconds — AddMoney runs a full
 -- DataSync, which must not happen 10x/second under the type rate limit.
@@ -64,7 +66,7 @@ local function attachHeld(player: Player)
 	end
 
 	local mutationDef = Catalog.GetMutation(instance.mutation)
-	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.45, mutationDef)
+	local ok, model = pcall(KeyboardModel.Build, def :: any, 0.45, mutationDef, nil, instance.stars)
 	if not ok or typeof(model) ~= "Instance" then
 		return
 	end
@@ -141,6 +143,9 @@ local function onEquipRequest(player: Player, uid: unknown)
 	if uid == nil then
 		profile.equippedUid = nil
 		destroyHeld(player)
+		for _, callback in unequippedCallbacks do
+			task.spawn(callback, player)
+		end
 	else
 		if typeof(uid) ~= "string" then
 			return
@@ -179,9 +184,17 @@ local function takeTypeToken(player: Player): boolean
 	return true
 end
 
-local function onTypeKeyRequest(player: Player)
+local function onTypeKeyRequest(player: Player, letter: unknown)
 	if not takeTypeToken(player) then
 		return
+	end
+	-- Optional ritual letter (see SecretService): accept only a single
+	-- A-Z/0-9 character and uppercase it — anything else is treated as nil.
+	-- An invalid letter never rejects the press itself; sounds, typing
+	-- income and races still count.
+	local acceptedLetter: string? = nil
+	if typeof(letter) == "string" and #letter == 1 and string.match(letter, "^%w$") ~= nil then
+		acceptedLetter = string.upper(letter)
 	end
 	local profile = DataService.GetProfile(player)
 	if not profile or not profile.equippedUid then
@@ -243,7 +256,7 @@ local function onTypeKeyRequest(player: Player)
 	end
 
 	for _, callback in typeAcceptedCallbacks do
-		task.spawn(callback, player)
+		task.spawn(callback, player, acceptedLetter)
 	end
 end
 
@@ -256,9 +269,17 @@ local function flushTypeEarnings(player: Player)
 end
 
 -- Fired after a TypeKeyRequest passes rate limiting + equip validation.
--- Used by TypingRaceService to count race keypresses.
-function EquipService.OnTypeAccepted(callback: (Player) -> ())
+-- `letter` is the validated pressed character (uppercase A-Z/0-9) or nil.
+-- Used by TypingRaceService to count race keypresses (it ignores the
+-- letter) and by SecretService to match ritual typing sequences.
+function EquipService.OnTypeAccepted(callback: (Player, string?) -> ())
 	table.insert(typeAcceptedCallbacks, callback)
+end
+
+-- Fired when a player explicitly unequips (EquipRequest with nil uid).
+-- Used by SecretService to clear its ritual typing buffer.
+function EquipService.OnUnequipped(callback: (Player) -> ())
+	table.insert(unequippedCallbacks, callback)
 end
 
 function EquipService.Init() end

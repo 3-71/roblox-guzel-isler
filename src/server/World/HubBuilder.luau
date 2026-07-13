@@ -34,6 +34,17 @@
 --                                   (Anchored, CanCollide=false, CanTouch=true)
 --                                   in front of the counter — UIController
 --                                   opens the Robux shop panel on touch.
+--
+-- Phase 4 contract, same placement rule (direct child of Workspace.Hub):
+--   FusionForge                     cozy low-poly forge Model (stone hearth,
+--                                   glowing crucible, anvil, lever, chimney)
+--                                   with a "⭐ FUSION FORGE" BillboardGui.
+--                                   Holds a glowing Part named exactly
+--                                   "FusionForgePad" (Anchored,
+--                                   CanCollide=false, CanTouch=true) in front
+--                                   of the hearth — UIController opens the
+--                                   fusion UI on touch. Landmark only: fusion
+--                                   itself is driven from the inventory UI.
 
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -78,6 +89,10 @@ local PALETTE = {
 	crateLid = Color3.fromRGB(146, 104, 66),
 	robuxGreen = Color3.fromRGB(72, 199, 121),
 	robuxDark = Color3.fromRGB(34, 84, 56),
+	forgeStone = Color3.fromRGB(134, 130, 140),
+	forgeIron = Color3.fromRGB(66, 68, 78),
+	ember = Color3.fromRGB(255, 138, 46),
+	emberBright = Color3.fromRGB(255, 198, 96),
 }
 
 -- Pastel keycap cubes decorating the top of the big sign.
@@ -596,6 +611,138 @@ local function buildKeycrateShop(hubFolder: Folder)
 	kiosk.Parent = hubFolder
 end
 
+-- ===== Phase 4: the "Fusion Forge" =====
+
+-- Cozy low-poly forge where duplicates become stars: chunky stone hearth, a
+-- molten glowing crucible with drifting embers, an anvil, a pull lever, a
+-- chimney, and the glowing "FusionForgePad" touch pad in front (UIController
+-- opens the fusion UI when the local character steps on it — fusion itself is
+-- driven from the inventory UI). Parented DIRECTLY to Workspace.Hub as
+-- "FusionForge" (destroy-by-name rebuild, same pattern as CrateStall).
+--
+-- Placement: angle 0.5 * step, radius 27 — the last free half-step slot,
+-- between the CollectionBoard (7.5 * step, r 33) and the CrateStall
+-- (1.5 * step, r 30). Back edge sits at ~r 30, clear of the bench ring
+-- (r 34); the touch pad in front reaches only ~r 19, clear of the 12-stud
+-- HubSpawn at the plaza centre.
+local function buildFusionForge(hubFolder: Folder)
+	local old = hubFolder:FindFirstChild("FusionForge")
+	if old ~= nil then
+		old:Destroy()
+	end
+
+	local forge = Instance.new("Model")
+	forge.Name = "FusionForge"
+
+	local step = math.pi * 2 / math.max(GameConfig.PlotCount, 1)
+	local angle = 0.5 * step
+	local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+	local basePos = direction * 27
+	-- Local space: -Z looks at the plaza centre (the forge's front).
+	local footCF = CFrame.lookAt(Vector3.new(basePos.X, PLAZA_TOP_Y, basePos.Z), Vector3.new(0, PLAZA_TOP_Y, 0))
+
+	-- Stone hearth: wide base slab + narrower work tier on top.
+	local hearth = part("Hearth", Vector3.new(7, 1.8, 5), footCF * CFrame.new(0, 0.9, 0.6), PALETTE.forgeStone, Enum.Material.Slate, forge)
+	part("HearthTop", Vector3.new(6.2, 0.6, 4.2), footCF * CFrame.new(0, 2.1, 0.6), PALETTE.pedestal, Enum.Material.Slate, forge)
+
+	-- Chimney rising from the back-left corner, with a darker cap.
+	part("Chimney", Vector3.new(1.9, 7.6, 1.9), footCF * CFrame.new(-1.6, 5.2, 2.2), PALETTE.forgeStone, Enum.Material.Slate, forge)
+	part("ChimneyCap", Vector3.new(2.4, 0.5, 2.4), footCF * CFrame.new(-1.6, 9.25, 2.2), PALETTE.forgeIron, Enum.Material.Metal, forge)
+
+	-- Crucible: iron bowl on the hearth with a molten neon surface inset on
+	-- top — the forge's centrepiece glow.
+	cylinder("CrucibleBowl", 1.6, 3.4, footCF * CFrame.new(-1.5, 3.2, 0.3), PALETTE.forgeIron, Enum.Material.Metal, forge)
+	local molten = cylinder("CrucibleMolten", 0.3, 2.7, footCF * CFrame.new(-1.5, 3.95, 0.3), PALETTE.ember, Enum.Material.Neon, forge)
+
+	local glow = Instance.new("PointLight")
+	glow.Color = PALETTE.ember
+	glow.Range = 15
+	glow.Brightness = 1.2
+	glow.Parent = molten
+
+	-- Drifting embers. The cylinder helper lays parts on their side (local X
+	-- is the vertical axis), so emit from the Right face to send them upward.
+	local embers = Instance.new("ParticleEmitter")
+	embers.EmissionDirection = Enum.NormalId.Right
+	embers.Color = ColorSequence.new(PALETTE.emberBright, PALETTE.ember)
+	embers.Lifetime = NumberRange.new(0.5, 1.1)
+	embers.Speed = NumberRange.new(2, 4)
+	embers.SpreadAngle = Vector2.new(14, 14)
+	embers.Size = NumberSequence.new(0.3)
+	embers.LightEmission = 1
+	embers.Rate = 7
+	embers.Parent = molten
+
+	-- Anvil on the right of the hearth top: base, waist, and the work face.
+	part("AnvilBase", Vector3.new(1.5, 0.5, 1.6), footCF * CFrame.new(1.9, 2.65, 0.3), PALETTE.forgeIron, Enum.Material.Metal, forge)
+	part("AnvilWaist", Vector3.new(0.8, 0.6, 0.9), footCF * CFrame.new(1.9, 3.2, 0.3), PALETTE.forgeIron, Enum.Material.Metal, forge)
+	part("AnvilFace", Vector3.new(2.8, 0.55, 1.1), footCF * CFrame.new(1.9, 3.78, 0.3), PALETTE.forgeIron, Enum.Material.Metal, forge)
+
+	-- Pull lever on the ground beside the hearth, leaning toward the plaza,
+	-- topped with a glowing gold knob.
+	part("LeverBase", Vector3.new(1.1, 0.4, 1.1), footCF * CFrame.new(4.1, 0.2, -0.6), PALETTE.forgeIron, Enum.Material.Metal, forge)
+	local handleCF = footCF * CFrame.new(4.1, 1.4, -0.9) * CFrame.Angles(math.rad(-24), 0, 0)
+	part("LeverHandle", Vector3.new(0.35, 2.4, 0.35), handleCF, PALETTE.wood, Enum.Material.WoodPlanks, forge)
+	part("LeverKnob", Vector3.new(0.75, 0.75, 0.75), handleCF * CFrame.new(0, 1.35, 0), PALETTE.boardGold, Enum.Material.Neon, forge)
+
+	-- Floating title above the crucible.
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "Label"
+	billboard.Size = UDim2.new(15, 0, 4.4, 0)
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, 6.4, 0)
+	billboard.MaxDistance = 140
+	billboard.LightInfluence = 0
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, 0, 0.58, 0)
+	title.Font = Enum.Font.FredokaOne
+	title.Text = "⭐ FUSION FORGE"
+	title.TextScaled = true
+	title.TextColor3 = PALETTE.ember
+	title.TextStrokeColor3 = PALETTE.signText
+	title.TextStrokeTransparency = 0.2
+	title.Parent = billboard
+	local hint = Instance.new("TextLabel")
+	hint.Name = "Hint"
+	hint.BackgroundTransparency = 1
+	hint.Position = UDim2.new(0, 0, 0.58, 0)
+	hint.Size = UDim2.new(1, 0, 0.42, 0)
+	hint.Font = Enum.Font.FredokaOne
+	hint.Text = "Fuse 3 duplicates into a starred keyboard!"
+	hint.TextScaled = true
+	hint.TextWrapped = true
+	hint.TextColor3 = PALETTE.emberBright
+	hint.TextStrokeColor3 = PALETTE.signText
+	hint.TextStrokeTransparency = 0.3
+	hint.Parent = billboard
+	billboard.Parent = molten
+
+	-- Glowing touch pad in front of the hearth. Contract name: UIController
+	-- listens for Touched on the "FusionForgePad" descendant of Workspace.Hub
+	-- to open the fusion UI.
+	local pad = cylinder(
+		"FusionForgePad",
+		0.4,
+		6,
+		footCF * CFrame.new(0, 0.12, -4.8),
+		PALETTE.ember,
+		Enum.Material.Neon,
+		forge
+	)
+	pad.CanCollide = false
+	pad.CanTouch = true
+
+	local padLight = Instance.new("PointLight")
+	padLight.Color = PALETTE.ember
+	padLight.Range = 12
+	padLight.Brightness = 0.7
+	padLight.Parent = pad
+
+	forge.PrimaryPart = hearth
+	forge.Parent = hubFolder
+end
+
 -- Builds (or rebuilds, replacing in place) the two plaza leaderboard boards
 -- and returns (EarnedBoard, CollectionBoard). Build() already calls this, so
 -- the boards exist by the time any service starts; calling again is safe.
@@ -682,11 +829,12 @@ function HubBuilder.Build(): Model
 	hub.PrimaryPart = plaza
 	hub.Parent = hubFolder
 
-	-- Phase 2/3 plaza furniture (siblings of HubIsland — see contract above).
+	-- Phase 2/3/4 plaza furniture (siblings of HubIsland — see contract above).
 	HubBuilder.BuildLeaderboards()
 	buildRacePad(hubFolder)
 	buildCrateStall(hubFolder)
 	buildKeycrateShop(hubFolder)
+	buildFusionForge(hubFolder)
 
 	return hub
 end

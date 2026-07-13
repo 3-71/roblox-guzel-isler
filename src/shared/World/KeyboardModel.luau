@@ -12,6 +12,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Rarities = require(Shared.Config.Rarities)
+local GameConfig = require(Shared.Config.GameConfig)
 
 type KeyboardLook = {
 	bodyColor: Color3,
@@ -30,7 +31,14 @@ export type KeyboardDef = {
 
 local KeyboardModel = {}
 
-function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): Model
+-- Build(def, scale, mutation?, ageStage?, stars?) — the Phase-4 args are
+-- optional and nil-safe, so every pre-existing call site keeps working:
+--   ageStage: 1-based index into GameConfig.Aging.Stages (nil = unaged) —
+--     patina tint deepening per stage, soft gold glow at the final stage.
+--   stars: fusion stars 1..GameConfig.Fusion.MaxStars (nil = unstarred) —
+--     one small gold stud above the back row per star (max 5 tiny parts,
+--     so even tiny builds at scale <= 0.5 keep them).
+function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?, ageStage: number?, stars: number?): Model
 	scale = math.max(scale, 0.05)
 	local look = def.look
 	local style = look.style
@@ -264,6 +272,51 @@ function KeyboardModel.Build(def: KeyboardDef, scale: number, mutation: any?): M
 		mutationLight.Range = math.clamp(4 + 4 * scale, 2, 60)
 		mutationLight.Brightness = 1.2
 		mutationLight.Parent = body
+	end
+
+	-- Fusion stars (Phase 4, optional 5th arg): a row of small gold studs on
+	-- the back bezel, one per star. Rotated 45° so they read as diamonds from
+	-- above. At most MaxStars tiny neon parts — cheap enough for every scale,
+	-- including hand-weld builds.
+	if stars ~= nil and stars >= 1 then
+		local starCount = math.clamp(math.floor(stars), 1, GameConfig.Fusion.MaxStars)
+		model:SetAttribute("Stars", starCount)
+		local gold = Color3.fromRGB(255, 200, 60)
+		-- Retro's rear wedge riser occupies the bezel; perch the studs on top.
+		local studY = if style == "retro" then bodyH / 2 + 0.35 else bodyH / 2 + 0.05
+		for i = 1, starCount do
+			local x = (i - (starCount + 1) / 2) * 0.36
+			local stud = newPart(
+				"Part",
+				Vector3.new(0.22, 0.1, 0.22),
+				off(x, studY, bodyD / 2 - 0.14) * CFrame.Angles(0, math.rad(45), 0),
+				gold
+			)
+			stud.Name = "StarStud"
+			stud.Material = Enum.Material.Neon
+		end
+	end
+
+	-- Display aging (Phase 4, optional 4th arg): subtle warm-bronze patina on
+	-- the body slab(s), deepening per stage; the final stage (Ancient) also
+	-- earns a soft gold glow. Tint-only below that, so small builds stay free.
+	if ageStage ~= nil and ageStage >= 1 then
+		local stageCount = #GameConfig.Aging.Stages
+		local stage = math.clamp(math.floor(ageStage), 1, stageCount)
+		model:SetAttribute("AgeStage", stage)
+		local bronze = Color3.fromRGB(176, 128, 66)
+		for _, part in model:GetChildren() do
+			if part:IsA("BasePart") and (part.Name == "Body" or part.Name == "BodyHalf") then
+				part.Color = part.Color:Lerp(bronze, stage * 0.12)
+			end
+		end
+		if stage >= stageCount then
+			local ageLight = Instance.new("PointLight")
+			ageLight.Color = Color3.fromRGB(255, 214, 120)
+			ageLight.Brightness = 0.8
+			ageLight.Range = math.clamp(3 + 4 * scale, 2, 60)
+			ageLight.Parent = body
+		end
 	end
 
 	return model

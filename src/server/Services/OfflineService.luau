@@ -3,6 +3,11 @@
 -- away. Registered as DataService's offline processor, so it runs between
 -- the raw profile load and OnProfileLoaded subscribers; DataService fires
 -- the OfflineReport remote (after a short delay) when we return a payload.
+--
+-- Display aging (Phase 4): the processor ALSO ages every DISPLAYED instance
+-- by secondsAway * GameConfig.Aging.OfflineRateMult. Because it runs before
+-- OnProfileLoaded, ShowcaseService renders the correct stage on join, and the
+-- login DataSync carries the new ageSeconds — no extra Sync needed here.
 
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -37,6 +42,26 @@ end
 function OfflineService.Process(profile: Types.Profile): Types.OfflinePayload?
 	local now = os.time()
 	local secondsAway = now - profile.lastSeen
+
+	-- Displayed boards keep maturing (at reduced rate) while the owner is
+	-- away — including short hops below OfflineMinSeconds, which is why this
+	-- runs before the early return. The profile session is born dirty, so
+	-- these mutations persist on the first autosave without a MarkDirty here.
+	if secondsAway > 0 then
+		local displayedUids: { [string]: boolean } = {}
+		for _, uid in profile.displayed do
+			displayedUids[uid] = true
+		end
+		if next(displayedUids) ~= nil then
+			local agedSeconds = secondsAway * GameConfig.Aging.OfflineRateMult
+			for _, instance in profile.keyboards do
+				if displayedUids[instance.uid] then
+					instance.ageSeconds = (instance.ageSeconds or 0) + agedSeconds
+				end
+			end
+		end
+	end
+
 	if secondsAway < GameConfig.OfflineMinSeconds then
 		return nil
 	end
@@ -83,7 +108,9 @@ function OfflineService.Process(profile: Types.Profile): Types.OfflinePayload?
 		table.insert(profile.keyboards, instance)
 		profile.collection[def.id] = (profile.collection[def.id] or 0) + 1
 		-- "Best" = highest sell value, so a Golden mid-tier can headline.
-		local value = Catalog.GetSellValue(def.id, factoryTier, mutationId, profile.rebirths)
+		-- Fresh rolls carry no mutation (offline is mutation-free by design),
+		-- no stars and no age, so those args stay nil.
+		local value = Catalog.GetSellValue(def.id, factoryTier, nil, profile.rebirths)
 		if value > bestValue then
 			bestValue = value
 			bestKeyboardId = def.id

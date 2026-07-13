@@ -2,7 +2,8 @@
 -- LikeService — visitors hold a ProximityPrompt on a plot's sign to "like"
 -- the farm. One like per (liker, owner) pair per server session; the count
 -- persists on the owner's profile (likesReceived) and shows on the sign via
--- PlotBuilder.SetSignInfo.
+-- PlotBuilder.SetSignInfo. Each like also bumps the GIVER's likesGiven and
+-- pokes SecretService.CheckWholesome (the Wholesome secret keyboard).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,6 +14,7 @@ local Types = require(Shared.Types)
 
 local DataService = require(script.Parent.DataService)
 local PlotService = require(script.Parent.PlotService)
+local SecretService = require(script.Parent.SecretService)
 local PlotBuilder = require(script.Parent.Parent.World.PlotBuilder)
 
 local PLOT_WAIT_SECONDS = 15 -- plot builds on the same OnProfileLoaded event
@@ -66,6 +68,16 @@ local function onLike(liker: Player, owner: Player)
 	profile.likesReceived += 1
 	DataService.MarkDirty(owner)
 	DataService.Sync(owner)
+
+	-- The giver's side: likesGiven feeds the Wholesome secret keyboard
+	-- (see GameConfig.Secrets + SecretService).
+	local likerProfile = DataService.GetProfile(liker)
+	if likerProfile ~= nil then
+		likerProfile.likesGiven += 1
+		DataService.MarkDirty(liker)
+		DataService.Sync(liker)
+		SecretService.CheckWholesome(liker)
+	end
 
 	Remotes.Notify:FireClient(owner, "info", liker.Name .. " liked your farm! ❤")
 	Remotes.Notify:FireClient(liker, "info", "You liked " .. owner.DisplayName .. "'s farm!")

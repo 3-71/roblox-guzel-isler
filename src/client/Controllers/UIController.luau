@@ -20,6 +20,7 @@ local Products = require(Shared:WaitForChild("Config"):WaitForChild("Products"))
 local IndexRewards = require(Shared:WaitForChild("Config"):WaitForChild("IndexRewards"))
 local RestockShop = require(Shared:WaitForChild("Config"):WaitForChild("RestockShop"))
 local FactoryTiers = require(Shared:WaitForChild("Config"):WaitForChild("FactoryTiers"))
+local Sets = require(Shared:WaitForChild("Config"):WaitForChild("Sets"))
 local Catalog = require(Shared:WaitForChild("Catalog"))
 local RollLogic = require(Shared:WaitForChild("RollLogic"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
@@ -160,6 +161,39 @@ local function isDisplayed(p: Types.Profile, uid: string): number?
 		end
 	end
 	return nil
+end
+
+-- Fusable copies of a keyboard id, mirroring FusionService's server rule:
+-- unlocked, unequipped, undisplayed, grouped by star value (stars or 0),
+-- groups already at Fusion.MaxStars ignored. starValue -> copy count.
+local function fusableGroups(p: Types.Profile, keyboardId: string): { [number]: number }
+	local groups: { [number]: number } = {}
+	for _, instance in p.keyboards do
+		if instance.id ~= keyboardId or instance.locked then
+			continue
+		end
+		if p.equippedUid == instance.uid or isDisplayed(p, instance.uid) ~= nil then
+			continue
+		end
+		local stars = instance.stars or 0
+		if stars >= GameConfig.Fusion.MaxStars then
+			continue
+		end
+		groups[stars] = (groups[stars] or 0) + 1
+	end
+	return groups
+end
+
+-- The LOWEST star value with >= Fusion.Required fusable copies — the group
+-- the server would fuse on a FuseRequest for this id. nil = can't fuse yet.
+local function fusableStarValue(p: Types.Profile, keyboardId: string): number?
+	local best: number? = nil
+	for stars, count in fusableGroups(p, keyboardId) do
+		if count >= GameConfig.Fusion.Required and (best == nil or stars < best) then
+			best = stars
+		end
+	end
+	return best
 end
 
 -- ===== money HUD =====
@@ -591,6 +625,8 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 	local panel = panels.inventory
 	local equipped = p.equippedUid == instance.uid
 	local standIndex = isDisplayed(p, instance.uid)
+	local locked = instance.locked == true
+	local stars = instance.stars or 0
 
 	local overlay = mkFrame(panel, {
 		Name = "ActionOverlay",
@@ -619,14 +655,23 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 
 	local title = mkText(overlay, {
 		Size = UDim2.new(1, 0, 0, 30),
-		Text = def.name,
+		Text = if stars > 0 then `{def.name} {string.rep("★", stars)}` else def.name,
 		TextColor3 = rarity.color,
 		LayoutOrder = 1,
 	})
 	title.ZIndex = 6
+	local sellValue = Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths, instance.stars, instance.ageSeconds)
+	local ageStage = if standIndex then Catalog.GetAgeStage(instance.ageSeconds) else nil
+	local subText = `{rarity.name} · sells for ${abbreviate(sellValue)}`
+	if ageStage then
+		subText ..= ` · {ageStage.name}`
+	end
+	if locked then
+		subText ..= " · 🔒 vaulted"
+	end
 	local sub = mkText(overlay, {
 		Size = UDim2.new(1, 0, 0, 18),
-		Text = `{rarity.name} · sells for ${abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths))}`,
+		Text = subText,
 		TextColor3 = TEXT_DIM,
 		LayoutOrder = 2,
 	})
@@ -693,24 +738,50 @@ local function openActionOverlay(instance: Types.KeyboardInstance)
 		end
 	end
 
-	-- Gift: only when this instance is free (not equipped/displayed) and
-	-- there is somebody else in the server to receive it.
+	-- Vault: locking excludes this instance from selling, gifting and fusion
+	-- (equip/display stay allowed). Server validates via VaultRequest.
+	actionButton(5, if locked then "🔓 Unlock (allow sell/gift/fuse)" else "🔒 Lock in vault", ACCENT, true, function()
+		Remotes.VaultRequest:FireServer(instance.uid, not locked)
+		closeActionOverlay()
+	end)
+
+	-- Fuse: enabled when the server would accept a FuseRequest for this id —
+	-- >= Fusion.Required unlocked/unequipped/undisplayed copies in one star
+	-- group below MaxStars (see fusableStarValue).
+	local fuseStars = fusableStarValue(p, instance.id)
+	local atMaxStars = stars >= GameConfig.Fusion.MaxStars
+	local fuseLabel = if fuseStars ~= nil
+		then `⭐ Fuse {GameConfig.Fusion.Required}x {if fuseStars > 0 then string.rep("★", fuseStars) else "unstarred"} → {string.rep("★", fuseStars + 1)}`
+		elseif atMaxStars then `Fuse (already {GameConfig.Fusion.MaxStars}★ — max)`
+		else `Fuse (need {GameConfig.Fusion.Required} spare duplicates)`
+	actionButton(6, fuseLabel, Color3.fromRGB(190, 140, 255), fuseStars ~= nil, function()
+		Remotes.FuseRequest:FireServer(instance.id)
+		closeActionOverlay()
+	end)
+
+	-- Gift: only when this instance is free (not equipped/displayed/locked)
+	-- and there is somebody else in the server to receive it.
 	local othersInServer = #Players:GetPlayers() > 1
-	local canGift = not equipped and standIndex == nil and othersInServer
+	local canGift = not equipped and standIndex == nil and not locked and othersInServer
 	local giftLabel = if canGift
 		then "Gift to a player"
+		elseif locked then "Gift (locked in vault)"
 		elseif not othersInServer then "Gift (no one else here)"
 		else "Gift (unequip/undisplay first)"
-	actionButton(5, giftLabel, Color3.fromRGB(120, 200, 255), canGift, function()
+	actionButton(7, giftLabel, Color3.fromRGB(120, 200, 255), canGift, function()
 		openGiftPicker(instance, def.name, rarity.color)
 	end)
 
-	local canSell = not equipped and standIndex == nil
-	actionButton(6, if canSell then "Sell" else "Sell (unequip/undisplay first)", BAD, canSell, function()
+	local canSell = not equipped and standIndex == nil and not locked
+	local sellLabel = if canSell
+		then "Sell"
+		elseif locked then "Sell (locked in vault)"
+		else "Sell (unequip/undisplay first)"
+	actionButton(8, sellLabel, BAD, canSell, function()
 		requestSell("uids", { instance.uid })
 		closeActionOverlay()
 	end)
-	actionButton(7, "Cancel", PANEL_BG, true, closeActionOverlay)
+	actionButton(9, "Cancel", PANEL_BG, true, closeActionOverlay)
 end
 
 local function renderInventory()
@@ -766,16 +837,69 @@ local function renderInventory()
 			Text = if mutationDef then `{string.upper(mutationDef.name)} · {rarity.name}` else rarity.name,
 			TextColor3 = if mutationDef then mutationDef.tint else TEXT_DIM,
 		})
+		-- Corner badges: gold fusion stars top-right, vault lock top-left.
+		local stars = instance.stars or 0
+		if stars > 0 then
+			local starBadge = mkText(tile, {
+				AnchorPoint = Vector2.new(1, 0),
+				Position = UDim2.new(1, -4, 0, 2),
+				Size = UDim2.fromOffset(0, 16),
+				AutomaticSize = Enum.AutomaticSize.X,
+				Text = string.rep("★", stars),
+				TextScaled = false,
+				TextSize = 13,
+				TextColor3 = ACCENT,
+			})
+			starBadge.ZIndex = 2
+		end
+		if instance.locked then
+			local lockBadge = mkText(tile, {
+				Position = UDim2.fromOffset(4, 2),
+				Size = UDim2.fromOffset(18, 16),
+				Text = "🔒",
+				TextScaled = false,
+				TextSize = 12,
+			})
+			lockBadge.ZIndex = 2
+		end
+		local standIndex = isDisplayed(p, instance.uid)
+		-- Age-stage chip on displayed boards (aging math is server-side; we
+		-- only read the snapshot's ageSeconds through Catalog.GetAgeStage).
+		local ageStage = if standIndex then Catalog.GetAgeStage(instance.ageSeconds) else nil
 		local status = if p.equippedUid == instance.uid
 			then "EQUIPPED"
-			elseif isDisplayed(p, instance.uid) then "ON DISPLAY"
-			else "$" .. abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths))
+			elseif standIndex then "ON DISPLAY"
+			else "$" .. abbreviate(Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths, instance.stars, instance.ageSeconds))
 		mkText(tile, {
-			Size = UDim2.new(1, -8, 0, 20),
-			Position = UDim2.fromOffset(4, 66),
+			Size = UDim2.new(1, -8, 0, if ageStage then 18 else 20),
+			Position = UDim2.fromOffset(4, if ageStage then 58 else 66),
 			Text = status,
 			TextColor3 = if status == "EQUIPPED" then ACCENT elseif status == "ON DISPLAY" then Color3.fromRGB(236, 112, 181) else GOOD,
 		})
+		if ageStage then
+			local chip = mkFrame(tile, {
+				AnchorPoint = Vector2.new(0.5, 1),
+				Position = UDim2.new(0.5, 0, 1, -4),
+				Size = UDim2.fromOffset(0, 16),
+				AutomaticSize = Enum.AutomaticSize.X,
+				BackgroundColor3 = Color3.fromRGB(28, 30, 36),
+			})
+			chip.ZIndex = 2
+			corner(chip, 8)
+			local chipText = mkText(chip, {
+				Size = UDim2.new(0, 0, 1, 0),
+				AutomaticSize = Enum.AutomaticSize.X,
+				Text = ageStage.name,
+				TextScaled = false,
+				TextSize = 11,
+				TextColor3 = ACCENT,
+			})
+			chipText.ZIndex = 3
+			local chipPad = Instance.new("UIPadding")
+			chipPad.PaddingLeft = UDim.new(0, 6)
+			chipPad.PaddingRight = UDim.new(0, 6)
+			chipPad.Parent = chip
+		end
 	end
 	grid.CanvasSize = UDim2.fromOffset(0, (math.ceil(#sorted / 3) * 104) + 8)
 
@@ -797,9 +921,11 @@ local function bulkPreview(): (number, number)
 	local count, total = 0, 0
 	for _, instance in p.keyboards do
 		local def = Catalog.GetKeyboard(instance.id)
-		if def and def.rarityTier < bulkTier and p.equippedUid ~= instance.uid and not isDisplayed(p, instance.uid) then
+		-- Mirrors the server's belowTier rule: locked (vaulted) instances are
+		-- never bulk-sold.
+		if def and def.rarityTier < bulkTier and not instance.locked and p.equippedUid ~= instance.uid and not isDisplayed(p, instance.uid) then
 			count += 1
-			total += Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths)
+			total += Catalog.GetSellValue(def.id, p.upgrades.factoryTier, instance.mutation, p.rebirths, instance.stars, instance.ageSeconds)
 		end
 	end
 	return count, total
@@ -936,6 +1062,57 @@ local function renderIndexStrip(p: Types.Profile, discovered: number)
 	end
 end
 
+-- Sets strip below the reward chips: one chip per Config/Sets entry showing
+-- emoji + discovered/6. Claimed sets (profile.setsClaimed — each grants
+-- permanent luck via GetEffectiveLuck) turn gold with a pulsing glow.
+local function renderSetsStrip(p: Types.Profile)
+	local strip = collContent:FindFirstChild("SetsStrip") :: Frame
+	for _, child in strip:GetChildren() do
+		if child:IsA("Frame") or child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+	for i, set in Sets do
+		local owned = 0
+		for _, keyboardId in set.keyboardIds do
+			if (p.collection[keyboardId] or 0) > 0 then
+				owned += 1
+			end
+		end
+		local claimed = p.setsClaimed[set.id] == true
+		local chip = mkFrame(strip, {
+			Size = UDim2.fromOffset(0, 36),
+			AutomaticSize = Enum.AutomaticSize.X,
+			LayoutOrder = i,
+			BackgroundColor3 = if claimed then Color3.fromRGB(80, 65, 20) elseif owned > 0 then PANEL_BG2 else Color3.fromRGB(28, 30, 36),
+		})
+		corner(chip, 10)
+		mkText(chip, {
+			Size = UDim2.new(0, 0, 1, 0),
+			AutomaticSize = Enum.AutomaticSize.X,
+			Text = if claimed then `{set.emoji} ✓` else `{set.emoji} {owned}/{#set.keyboardIds}`,
+			TextScaled = false,
+			TextSize = 14,
+			TextColor3 = if claimed then ACCENT elseif owned > 0 then TEXT_MAIN else TEXT_DIM,
+		})
+		local chipPad = Instance.new("UIPadding")
+		chipPad.PaddingLeft = UDim.new(0, 8)
+		chipPad.PaddingRight = UDim.new(0, 8)
+		chipPad.Parent = chip
+		if claimed then
+			local glow = stroke(chip, ACCENT, 2)
+			task.spawn(function()
+				while chip.Parent and glow.Parent do
+					TweenService:Create(glow, TweenInfo.new(0.8), { Transparency = 0.7 }):Play()
+					task.wait(0.8)
+					TweenService:Create(glow, TweenInfo.new(0.8), { Transparency = 0 }):Play()
+					task.wait(0.8)
+				end
+			end)
+		end
+	end
+end
+
 local function renderCollection()
 	local p = profile
 	if not p then
@@ -948,15 +1125,24 @@ local function renderCollection()
 		end
 	end
 
+	-- Secrets are excluded from the "N/36" header (Catalog.CountDiscoverable)
+	-- and render in their own "???" row below the rarity tiers. The index
+	-- strip keeps counting EVERY distinct discovery (secrets included) —
+	-- that mirrors IndexService's claim rule.
 	local discovered = 0
+	local discoveredAll = 0
 	for _, def in Keyboards do
 		if (p.collection[def.id] or 0) > 0 then
-			discovered += 1
+			discoveredAll += 1
+			if not def.secret then
+				discovered += 1
+			end
 		end
 	end
 	local header = collContent:FindFirstChild("Header") :: TextLabel
-	header.Text = `Collection: {discovered} / {#Keyboards}`
-	renderIndexStrip(p, discovered)
+	header.Text = `Collection: {discovered} / {Catalog.CountDiscoverable()}`
+	renderIndexStrip(p, discoveredAll)
+	renderSetsStrip(p)
 
 	local y = 0
 	for tier = 1, #Rarities do
@@ -972,7 +1158,7 @@ local function renderCollection()
 		y += 26
 		local x = 0
 		for _, def in Keyboards do
-			if def.rarityTier ~= tier then
+			if def.rarityTier ~= tier or def.secret then
 				continue
 			end
 			local count = p.collection[def.id] or 0
@@ -1012,6 +1198,61 @@ local function renderCollection()
 		end
 		y += 72
 	end
+
+	-- "???" row: the secret boards. Names stay hidden until owned; how to
+	-- get them is never spelled out here (that's the fun).
+	local SECRET_COLOR = Color3.fromRGB(200, 130, 255)
+	local secretHeader = mkText(scroll, {
+		Position = UDim2.fromOffset(4, y),
+		Size = UDim2.new(1, -8, 0, 22),
+		Text = "???",
+		TextColor3 = SECRET_COLOR,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+	secretHeader.ZIndex = 2
+	y += 26
+	local secretX = 0
+	for _, def in Keyboards do
+		if not def.secret then
+			continue
+		end
+		local count = p.collection[def.id] or 0
+		local found = count > 0
+		local tile = mkFrame(scroll, {
+			Position = UDim2.fromOffset(secretX, y),
+			Size = UDim2.fromOffset(122, 64),
+			BackgroundColor3 = if found then PANEL_BG2 else Color3.fromRGB(28, 30, 36),
+		})
+		corner(tile, 8)
+		stroke(tile, SECRET_COLOR, if found then 2 else 1)
+		mkText(tile, {
+			Size = UDim2.new(1, -8, 0, 34),
+			Position = UDim2.fromOffset(4, 4),
+			Text = if found then def.name else "???",
+			TextColor3 = if found then SECRET_COLOR else TEXT_DIM,
+		})
+		mkText(tile, {
+			Size = UDim2.new(1, -8, 0, 18),
+			Position = UDim2.fromOffset(4, 40),
+			Text = if found then `SECRET · x{count}` else "undiscovered",
+			TextColor3 = if found then SECRET_COLOR else TEXT_DIM,
+		})
+		if found then
+			-- same gentle pulse the godly finds get
+			task.spawn(function()
+				local uiStroke = tile:FindFirstChildOfClass("UIStroke")
+				while tile.Parent and uiStroke do
+					TweenService:Create(uiStroke, TweenInfo.new(1.2), { Transparency = 0.7 }):Play()
+					task.wait(1.2)
+					TweenService:Create(uiStroke, TweenInfo.new(1.2), { Transparency = 0 }):Play()
+					task.wait(1.2)
+				end
+			end)
+		end
+		secretX += 130
+	end
+	y += 72
+
 	scroll.CanvasSize = UDim2.fromOffset(0, y + 8)
 end
 
@@ -1041,10 +1282,24 @@ local function buildCollectionPanel()
 	stripLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 	stripLayout.Parent = strip
 
+	-- Collection-set chips (Config/Sets) live under the reward chips.
+	local setsStrip = mkFrame(content, {
+		Name = "SetsStrip",
+		Position = UDim2.fromOffset(0, 70),
+		Size = UDim2.new(1, 0, 0, 40),
+		BackgroundTransparency = 1,
+	})
+	local setsLayout = Instance.new("UIListLayout")
+	setsLayout.FillDirection = Enum.FillDirection.Horizontal
+	setsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	setsLayout.Padding = UDim.new(0, 6)
+	setsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	setsLayout.Parent = setsStrip
+
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Scroll"
-	scroll.Position = UDim2.fromOffset(0, 72)
-	scroll.Size = UDim2.new(1, 0, 1, -76)
+	scroll.Position = UDim2.fromOffset(0, 116)
+	scroll.Size = UDim2.new(1, 0, 1, -120)
 	scroll.BackgroundTransparency = 1
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 6
@@ -1540,6 +1795,146 @@ local function buildRestockPanel()
 	renderers.restock = renderRestock
 end
 
+-- ===== fusion forge panel (opened by the hub FusionForgePad) =====
+
+local fusionContent: Frame
+
+local function renderFusion()
+	local p = profile
+	if not p then
+		return
+	end
+	local scroll = fusionContent:FindFirstChild("Scroll") :: ScrollingFrame
+	for _, child in scroll:GetChildren() do
+		if child:IsA("Frame") or child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+
+	local required = GameConfig.Fusion.Required
+
+	-- One row per (keyboard id, star group) holding at least 2 spare copies,
+	-- highest rarity first. Only the id's LOWEST fusable group gets a live
+	-- button — that is the group the server fuses on a FuseRequest.
+	local rows: { { def: typeof(Keyboards[1]), stars: number, count: number } } = {}
+	local seen: { [string]: boolean } = {}
+	for _, instance in p.keyboards do
+		if seen[instance.id] then
+			continue
+		end
+		seen[instance.id] = true
+		local def = Catalog.GetKeyboard(instance.id)
+		if not def then
+			continue
+		end
+		for stars, count in fusableGroups(p, instance.id) do
+			if count >= 2 then
+				table.insert(rows, { def = def, stars = stars, count = count })
+			end
+		end
+	end
+	table.sort(rows, function(a, b)
+		if a.def.rarityTier ~= b.def.rarityTier then
+			return a.def.rarityTier > b.def.rarityTier
+		end
+		if a.def.id ~= b.def.id then
+			return a.def.id < b.def.id
+		end
+		return a.stars < b.stars
+	end)
+
+	local y = 0
+	for _, row in rows do
+		local rarity = Catalog.GetRarity(row.def.rarityTier)
+		if not rarity then
+			continue
+		end
+		local keyboardId = row.def.id
+		local ready = row.count >= required and fusableStarValue(p, keyboardId) == row.stars
+		local card = mkFrame(scroll, {
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, -8, 0, 56),
+			BackgroundColor3 = PANEL_BG2,
+		})
+		corner(card, 10)
+		stroke(card, rarity.color, if ready then 2 else 1)
+		mkText(card, {
+			Position = UDim2.fromOffset(10, 6),
+			Size = UDim2.new(1, -140, 0, 24),
+			Text = row.def.name,
+			TextScaled = false,
+			TextSize = 16,
+			TextColor3 = rarity.color,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		mkText(card, {
+			Position = UDim2.fromOffset(10, 32),
+			Size = UDim2.new(1, -140, 0, 18),
+			Text = `{row.count}x {if row.stars > 0 then string.rep("★", row.stars) else "unstarred"} spare`,
+			TextScaled = false,
+			TextSize = 13,
+			TextColor3 = TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		local fuseButton = mkButton(card, {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -8, 0.5, 0),
+			Size = UDim2.fromOffset(112, 40),
+			Text = if ready then `Fuse → {string.rep("★", row.stars + 1)}` else `{math.min(row.count, required)}/{required}`,
+			TextScaled = false,
+			TextSize = 15,
+			BackgroundColor3 = if ready then Color3.fromRGB(190, 140, 255) else PANEL_BG,
+			TextColor3 = if ready then Color3.new(0.1, 0.1, 0.12) else TEXT_DIM,
+			Active = ready,
+			AutoButtonColor = ready,
+		}, function()
+			if ready then
+				Remotes.FuseRequest:FireServer(keyboardId)
+			end
+		end)
+		corner(fuseButton, 10)
+		y += 64
+	end
+
+	if #rows == 0 then
+		mkText(scroll, {
+			Position = UDim2.fromOffset(0, 12),
+			Size = UDim2.new(1, -8, 0, 60),
+			Text = `Nothing to fuse yet.\nCollect {required} copies of the same keyboard (unlocked, not equipped, not on display) and bring them here!`,
+			TextScaled = false,
+			TextSize = 14,
+			TextWrapped = true,
+			TextColor3 = TEXT_DIM,
+		})
+		y = 80
+	end
+	scroll.CanvasSize = UDim2.fromOffset(0, y + 8)
+end
+
+local function buildFusionPanel()
+	local _panel, content = mkPanel("fusion", "⚒ Fusion Forge", UDim2.fromOffset(420, 480))
+	fusionContent = content
+	mkText(content, {
+		Size = UDim2.new(1, 0, 0, 34),
+		Text = `Fuse {GameConfig.Fusion.Required} identical spare boards into one +1★ copy (max {GameConfig.Fusion.MaxStars}★). Every ★ multiplies sell value x{GameConfig.Fusion.ValueMultPerStar}.`,
+		TextScaled = false,
+		TextSize = 13,
+		TextWrapped = true,
+		TextColor3 = TEXT_DIM,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	})
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Scroll"
+	scroll.Position = UDim2.fromOffset(0, 40)
+	scroll.Size = UDim2.new(1, 0, 1, -44)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.Parent = content
+	renderers.fusion = renderFusion
+end
+
 -- ===== button rail =====
 
 local function buildRail()
@@ -1708,6 +2103,10 @@ local function showCelebration(payload: Types.CollectedPayload)
 	local mutationDef = Catalog.GetMutation(payload.mutation)
 	local titleText = if mutationDef then `{string.upper(mutationDef.name)} {def.name}!` else def.name
 	local titleColor = if mutationDef then mutationDef.tint else rarity.color
+	local payloadStars = payload.stars
+	if typeof(payloadStars) == "number" and payloadStars > 0 then
+		titleText ..= ` {string.rep("★", math.min(payloadStars, GameConfig.Fusion.MaxStars))}`
+	end
 
 	local skipped = false
 	local inputConn = UserInputService.InputBegan:Connect(function(input, _gameProcessed)
@@ -1856,16 +2255,18 @@ local function showCelebration(payload: Types.CollectedPayload)
 
 	local p = profile
 	if p then
+		-- Secrets stay out of the ticker (Catalog.CountDiscoverable is the
+		-- denominator everywhere the "N/36" progress shows).
 		local discovered = 0
 		for _, kbDef in Keyboards do
-			if (p.collection[kbDef.id] or 0) > 0 then
+			if not kbDef.secret and (p.collection[kbDef.id] or 0) > 0 then
 				discovered += 1
 			end
 		end
 		mkText(card, {
 			Size = UDim2.new(1, -20, 0, 20),
 			Position = UDim2.fromOffset(10, 248),
-			Text = `{discovered}/{#Keyboards} collected`,
+			Text = `{discovered}/{Catalog.CountDiscoverable()} collected`,
 			TextColor3 = TEXT_DIM,
 			ZIndex = 12,
 		})
@@ -2089,6 +2490,37 @@ local function watchRobuxShopPad()
 	end)
 end
 
+-- ===== fusion forge pad proximity (hub Fusion Forge machine) =====
+
+-- Stepping on the "FusionForgePad" at the hub Fusion Forge opens the fusion
+-- panel. Same rebind loop as watchRobuxShopPad: if the pad is rebuilt, the
+-- inner wait notices and we search Workspace.Hub for its replacement.
+local function watchFusionForgePad()
+	task.spawn(function()
+		local debounce = 0
+		while true do
+			local hub = workspace:FindFirstChild("Hub")
+			local pad = if hub then hub:FindFirstChild("FusionForgePad", true) else nil
+			if pad and pad:IsA("BasePart") then
+				local connection = pad.Touched:Connect(function(hit)
+					local character = localPlayer.Character
+					if character and hit:IsDescendantOf(character) and os.clock() - debounce > 1 then
+						debounce = os.clock()
+						if openPanelName ~= "fusion" then
+							togglePanel("fusion")
+						end
+					end
+				end)
+				while pad:IsDescendantOf(game) do
+					task.wait(1)
+				end
+				connection:Disconnect()
+			end
+			task.wait(1)
+		end
+	end)
+end
+
 -- ===== typing reward floaters (TypeReward remote) =====
 
 -- One little "+$X" per accepted keypress on the equipped keyboard, drifting
@@ -2144,10 +2576,12 @@ function UIController.Start()
 	buildRebirthPanel()
 	buildShopPanel()
 	buildRestockPanel()
+	buildFusionPanel()
 	buildRail()
 	buildToasts()
 	watchSellZone()
 	watchRobuxShopPad()
+	watchFusionForgePad()
 
 	Remotes.DataSync.OnClientEvent:Connect(function(snapshot: Types.Profile)
 		profile = snapshot
@@ -2165,7 +2599,9 @@ function UIController.Start()
 	end)
 
 	Remotes.KeyboardCollected.OnClientEvent:Connect(function(payload: Types.CollectedPayload)
-		if payload.rarityTier >= GameConfig.CelebrateMinTier or payload.mutation ~= nil then
+		-- Starred results (fusion) always celebrate — the player asked for them.
+		local starred = typeof(payload.stars) == "number" and (payload.stars :: number) > 0
+		if payload.rarityTier >= GameConfig.CelebrateMinTier or payload.mutation ~= nil or starred then
 			queueCelebration(payload)
 		end
 	end)
