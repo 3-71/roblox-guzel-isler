@@ -138,17 +138,40 @@ gitignored). In Claude sessions rojo lives at `~/.cargo/bin/rojo`.
 10. GitHub App must be INSTALLED (github.com/settings/installations), not
     just authorized, for pushes to work.
 
-## State (2026-07-13)
+## State (2026-07-27)
 
-~12,500 lines of Luau across ~53 files; 26+ commits, all pushed. Shipped:
-full core loop, phases 2-4 (mutations/rebirth/index/leaderboards/events/
-monetization/race/likes; restock/gifting/pity/ceremony/spectacle; secrets/
-sets/vault/fusion/aging), typing income, keycrate shop, rainbow keyboards,
-world glow-up (packing stations, festival hub, warm lighting), buyable walls
-(4 tiers), rebirth tower (5 floors). A 31-agent adversarial review fixed 14
-confirmed bugs earlier; later fleets run build → verify as standard.
+~13,000 lines of Luau; all commits pushed. Shipped: full core loop, phases
+2-4 (mutations/rebirth/index/leaderboards/events/monetization/race/likes;
+restock/gifting/pity/ceremony/spectacle; secrets/sets/vault/fusion/aging),
+typing income, keycrate shop, rainbow keyboards, world glow-up (packing
+stations, festival hub, warm lighting), buyable walls (4 tiers), rebirth
+tower (5 floors). A 31-agent adversarial review fixed 14 confirmed bugs
+earlier; later fleets run build → verify as standard.
 
-Idea backlog (user-approved list, unbuilt): streak calendar, harmony meter,
-new weather mutations (Cold Snap/Static Surge/Overclocked), titles & auras,
+## ⏸ PHASE 5 IS MID-FLIGHT — resume here
+
+Phase 5 = THOCK MONSTER boss (user's own design: monster attacks bases,
+everyone types on it + clicks weak-spot keycaps; win = +25% sell 10 min,
+lose = -25%; base damage is TEMPORARY VISUALS ONLY — user confirmed both
+choices via Q&A), 7-day streak calendar (day 7 = guaranteed Legendary, 48h
+grace), new weather (Cold Snap frozen x6 / Static Surge glitched x10 /
+Overclocked typing x2) and 6 earnable Thock Buddies (never paid).
+
+- CONTRACTS ARE LANDED AND PUSHED (commit "Phase 5 contracts"): configs
+  (GameConfig.Boss/StreakCalendar, Config/Buddies, Events+bias+typingMult,
+  frozen mutation), Types/Data defaults, Remotes (BossState/ClaimCalendar/
+  BuddyEquip), EconomyService.SetSellBoost/GetSellMult, hooks in
+  ProductionService/EquipService. ARCHITECTURE.md "# Phase 5" holds the full
+  per-slot service contracts.
+- The 5-builder + 2-verifier fleet script is saved at `tools/phase5-fleet.mjs`
+  (self-contained, repo paths only). It was launched once and STOPPED at the
+  user's request before any builder wrote files — the working tree was clean.
+- To resume: run that script with the Workflow tool (fresh run; nothing to
+  salvage), fix what the verifiers find, then wire BossService + BuddyService
+  into init.server.luau (integration is NOT a fleet slot), run the validation
+  trio, commit, push, update the artifact page, tell the user in Dutch with
+  the PowerShell block.
+
+Idea backlog (user-approved, unbuilt): harmony meter, titles & auras,
 musical boards, mod workshop, daily thock jobs, rebirth talents, seasons,
-thock buddies, MEGA keyboard boss, thock thief, keycap climb.
+thock thief, keycap climb, MEGA-boss variant.
