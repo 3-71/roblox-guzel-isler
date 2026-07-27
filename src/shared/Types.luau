@@ -58,6 +58,17 @@ export type Profile = {
 	-- UTC day number (os.time() // 86400)
 	streakDays: number,
 	streakLastDay: number,
+	-- 7-day streak calendar (StreakService): current position 1..7 (0 = never
+	-- claimed) + UTC day number of the last claim
+	calendarDay: number,
+	calendarLastClaim: number,
+	-- THOCK MONSTER fights this player helped win (BossService; buddy unlocks)
+	bossWins: number,
+	-- typing races won (TypingRaceService; buddy unlocks)
+	raceWins: number,
+	-- owned Thock Buddies: BuddyDef id -> true (see Config/Buddies)
+	buddies: { [string]: boolean },
+	equippedBuddy: string?,
 	-- monotonic write counter (DataService staleness guard)
 	saveCount: number,
 }

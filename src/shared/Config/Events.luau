@@ -10,8 +10,10 @@ export type EventDef = {
 	duration: number, -- seconds
 	luckBonus: number, -- added to effective luck for everyone
 	mutationMult: number, -- multiplies all mutation chances
+	mutationBias: { [string]: number }?, -- extra per-mutation-id multiplier (Cold Snap -> frozen x6)
+	typingMult: number?, -- multiplies typing income while active (Overclocked)
 	weight: number, -- selection weight
-	sky: string, -- "storm" | "golden" — client lighting preset
+	sky: string, -- "storm" | "golden" | "frost" | "static" | "overclock" — client lighting preset
 	color: Color3, -- banner color
 }
 
@@ -37,6 +39,42 @@ local Events: { EventDef } = {
 		weight = 2,
 		sky = "golden",
 		color = Color3.fromRGB(255, 200, 60),
+	},
+	{
+		id = "cold_snap",
+		name = "COLD SNAP",
+		tagline = "Brrr... the only time FROZEN keyboards drop (x6)!",
+		duration = 240,
+		luckBonus = 1,
+		mutationMult = 1,
+		mutationBias = { frozen = 6 },
+		weight = 2,
+		sky = "frost",
+		color = Color3.fromRGB(160, 220, 255),
+	},
+	{
+		id = "static_surge",
+		name = "STATIC SURGE",
+		tagline = "⚡ GLITCHED chance x10 — drop everything and roll!",
+		duration = 180,
+		luckBonus = 0,
+		mutationMult = 1,
+		mutationBias = { glitched = 10 },
+		weight = 1,
+		sky = "static",
+		color = Color3.fromRGB(0, 255, 140),
+	},
+	{
+		id = "overclocked",
+		name = "OVERCLOCKED",
+		tagline = "Every keypress pays DOUBLE — type like the wind!",
+		duration = 150,
+		luckBonus = 3,
+		mutationMult = 2,
+		typingMult = 2,
+		weight = 1,
+		sky = "overclock",
+		color = Color3.fromRGB(255, 120, 80),
 	},
 }
 

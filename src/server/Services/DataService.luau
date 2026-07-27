@@ -80,6 +80,12 @@ local function defaultProfile(): Types.Profile
 		grantedReceipts = {},
 		streakDays = 0,
 		streakLastDay = 0,
+		calendarDay = 0,
+		calendarLastClaim = 0,
+		bossWins = 0,
+		raceWins = 0,
+		buddies = {},
+		equippedBuddy = nil,
 		saveCount = 0,
 	}
 end

@@ -164,18 +164,24 @@ function RollLogic.RollKeyboard(factoryTier: number, luckLevel: number, rng: Ran
 end
 
 -- Rolls a mutation (or nil). chanceMult scales every mutation's base chance
--- (events / boosts); total mutation probability is capped at 90%.
-function RollLogic.RollMutation(rng: Random, chanceMult: number): string?
+-- (events / boosts / buddies); the optional bias table multiplies SPECIFIC
+-- mutation ids on top (weather events: Cold Snap -> frozen x6). Total
+-- mutation probability is capped at 90%.
+function RollLogic.RollMutation(rng: Random, chanceMult: number, bias: { [string]: number }?): string?
 	chanceMult = math.max(chanceMult, 0)
+	local function chanceOf(mutation: typeof(Mutations[1])): number
+		local biased = if bias then bias[mutation.id] or 1 else 1
+		return mutation.chance * chanceMult * math.max(biased, 0)
+	end
 	local total = 0
 	for _, mutation in Mutations do
-		total += mutation.chance * chanceMult
+		total += chanceOf(mutation)
 	end
 	local cap = if total > 0.9 then 0.9 / total else 1
 	local roll = rng:NextNumber()
 	local cumulative = 0
 	for _, mutation in Mutations do
-		cumulative += mutation.chance * chanceMult * cap
+		cumulative += chanceOf(mutation) * cap
 		if roll <= cumulative then
 			return mutation.id
 		end
@@ -247,6 +253,9 @@ function RollLogic.GetEffectiveLuck(profile: any, now: number, eventLuckBonus: n
 				elseif key == "restock_luck" then
 					-- hub stall Luck Surge (see Config/RestockShop)
 					luck += getRestockLuckSurgeBonus()
+				elseif key == "calendar_luck" then
+					-- streak-calendar luck-boost days (see GameConfig.StreakCalendar)
+					luck += GameConfig.StreakCalendar.BoostLuckBonus
 				else
 					for _, product in Products.DevProducts do
 						if product.key == key then

@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 
 local Shared = ReplicatedStorage.Shared
 local GameConfig = require(Shared.Config.GameConfig)
+local Events = require(Shared.Config.Events)
 local Catalog = require(Shared.Catalog)
 local Remotes = require(Shared.Remotes)
 
@@ -240,6 +241,19 @@ local function onTypeKeyRequest(player: Player, letter: unknown)
 	-- Typing income: each accepted keypress on the equipped board pays a
 	-- fraction of its live sell value. The client gets the per-press amount
 	-- immediately (popup); the money itself lands on the next flush.
+	-- Multipliers: OVERCLOCKED weather doubles it (EventDef.typingMult) and
+	-- the THOCK MONSTER aftermath window applies (EconomyService.GetSellMult).
+	local typingMult = 1
+	local activeEventId = workspace:GetAttribute("ActiveEventId")
+	local activeUntil = workspace:GetAttribute("ActiveEventUntil")
+	if typeof(activeEventId) == "string" and typeof(activeUntil) == "number" and os.time() < activeUntil then
+		for _, eventDef in Events do
+			if eventDef.id == activeEventId then
+				typingMult = eventDef.typingMult or 1
+				break
+			end
+		end
+	end
 	local payout = math.floor(
 		Catalog.GetSellValue(
 			instance.id,
@@ -248,7 +262,7 @@ local function onTypeKeyRequest(player: Player, letter: unknown)
 			profile.rebirths,
 			instance.stars,
 			instance.ageSeconds
-		) * GameConfig.TypingIncome.ValueFraction
+		) * GameConfig.TypingIncome.ValueFraction * typingMult * EconomyService.GetSellMult()
 	)
 	if payout > 0 then
 		pendingTypeEarnings[player] = (pendingTypeEarnings[player] or 0) + payout

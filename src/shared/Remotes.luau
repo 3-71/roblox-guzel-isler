@@ -42,6 +42,10 @@ local REMOTE_NAMES = {
 	"VaultRequest", -- client -> server: (uid: string, locked: boolean) toggle sell/gift/fuse protection on an owned instance
 	"FuseRequest", -- client -> server: keyboardId string — server picks the 3 cheapest unlocked/unequipped/undisplayed duplicates of that id and fuses them into one starred instance
 	"TypeReward", -- server -> client: (amount: number) money earned by one accepted keypress on the equipped keyboard
+	-- phase 5
+	"BossState", -- server -> ALL clients: { phase: "warning"|"fight"|"won"|"lost"|"idle", hp, maxHp, endsAt } THOCK MONSTER updates
+	"ClaimCalendar", -- client -> server: claim today's streak-calendar reward (validated server-side)
+	"BuddyEquip", -- client -> server: (buddyId: string?) equip an owned Thock Buddy; nil unequips
 }
 
 local Remotes = {}

@@ -249,7 +249,17 @@ local function produceTick(player: Player, state: PlayerState, profile: Types.Pr
 	-- Mutation roll: active event's multiplier times any restock-stall
 	-- mutation charm the player is carrying (1 when neither applies).
 	local mutationMult = (if event then event.mutationMult else 1) * consumeCharmMult(player)
-	local mutationId = RollLogic.RollMutation(rng, mutationMult)
+	-- Equipped Thock Buddy polish bonus (Phase 5). Lazy pcall-require: no
+	-- cycle, and production still boots if BuddyService is absent.
+	local buddyOk, buddyBonus = pcall(function()
+		local BuddyService = require(script.Parent.BuddyService) :: any
+		return BuddyService.GetMutationBonus(player)
+	end)
+	if buddyOk and typeof(buddyBonus) == "number" then
+		mutationMult += buddyBonus
+	end
+	-- Weather bias: Cold Snap / Static Surge boost SPECIFIC mutations.
+	local mutationId = RollLogic.RollMutation(rng, mutationMult, if event then event.mutationBias else nil)
 	local mutationDef = Catalog.GetMutation(mutationId)
 	local rarity = Catalog.GetRarity(def.rarityTier)
 	local glow = (rarity ~= nil and rarity.glow) or mutationDef ~= nil

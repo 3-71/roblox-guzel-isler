@@ -189,6 +189,28 @@ function EconomyService.RefreshLeaderstats(player: Player)
 	end
 end
 
+-- ===== Server-wide sell multiplier (THOCK MONSTER win/lose aftermath) =====
+-- BossService sets it; every sell and typing payout reads it. Reverts to 1
+-- automatically when the window expires — no cleanup timer needed.
+
+local sellBoostMult = 1
+local sellBoostUntil = 0
+
+function EconomyService.SetSellBoost(mult: number, seconds: number)
+	if typeof(mult) ~= "number" or mult ~= mult or mult <= 0 then
+		return
+	end
+	sellBoostMult = math.clamp(mult, 0.1, 10)
+	sellBoostUntil = os.clock() + math.max(seconds, 0)
+end
+
+function EconomyService.GetSellMult(): number
+	if os.clock() >= sellBoostUntil then
+		return 1
+	end
+	return sellBoostMult
+end
+
 function EconomyService.AddMoney(player: Player, amount: number)
 	local profile = DataService.GetProfile(player)
 	if profile == nil then
@@ -353,6 +375,9 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 	-- Friends-in-server bonus (Phase 3 contract).
 	local bonus = math.min(GameConfig.FriendBonusPerFriend * friendCount(player), GameConfig.FriendBonusCap)
 	total = math.floor(total * (1 + bonus))
+
+	-- THOCK MONSTER aftermath: server-wide +25% / -25% window (Phase 5).
+	total = math.floor(total * EconomyService.GetSellMult())
 
 	EconomyService.AddMoney(player, total)
 

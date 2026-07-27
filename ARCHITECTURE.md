@@ -540,3 +540,99 @@ keyboard of exactly that rarity tier through InventoryService.AddKeyboard
 still consumes: fall back to cash = that board's sell value + Notify. Hub has
 a "Keycrate Shop" kiosk with a touch pad named `RobuxShopPad` (client opens
 the Robux shop panel on touch).
+
+# Phase 5 — Thock Monster, Streak Calendar, New Weather, Thock Buddies
+
+Shared contracts are LANDED (configs/types/remotes/hooks below). Builders
+consume them; never edit shared files.
+
+Landed contracts:
+- GameConfig.Boss / GameConfig.StreakCalendar (all tunables live there)
+- Config/Buddies.luau (6 earnable buddies, perk.mutationBonus, earn kinds)
+- Config/Events.luau: +cold_snap/static_surge/overclocked; EventDef gained
+  `mutationBias: {[string]: number}?` and `typingMult: number?`; new skies
+  "frost" | "static" | "overclock"
+- Config/Mutations.luau: +frozen (icy tint, pitch 1.3)
+- RollLogic.RollMutation(rng, chanceMult, bias?) — ProductionService already
+  passes the active event's bias and adds BuddyService.GetMutationBonus via
+  lazy pcall. GetEffectiveLuck handles the "calendar_luck" boost key.
+- EconomyService.SetSellBoost(mult, seconds) / GetSellMult() — sells AND
+  typing income already multiply by it; EquipService also applies the active
+  event's typingMult (Overclocked x2).
+- Types.Profile: calendarDay, calendarLastClaim, bossWins, raceWins,
+  buddies {id:true}, equippedBuddy?; DataService defaults landed.
+- Remotes: BossState (s->all), ClaimCalendar (c->s), BuddyEquip (c->s).
+
+## Service contracts & ownership (disjoint slots)
+
+1. **boss**: Services/BossService.luau NEW + World/BossBuilder.luau NEW.
+   Loop: every Boss.Min..MaxIntervalSeconds (only if >= 1 player), fire
+   BossState "warning" (WarningSeconds), then build the THOCK MONSTER via
+   BossBuilder (procedural low-poly monster made of broken keyboard parts,
+   ~2x factory height, engine materials only) on the open ground between hub
+   and plots. Fight (FightSeconds): monster slowly stomps toward the nearest
+   plots (anchored PivotTo lerp; NEVER overlaps a plot's buildings — clamp at
+   plot edge), roaring rbxasset sounds. Damage: subscribe
+   EquipService.OnTypeAccepted — an accepted press within DamageRadius of the
+   monster deals TypeDamageBase + TypeDamagePerTier * factoryTier; also
+   WeakSpotCount glowing keycap parts with server-side ClickDetectors deal
+   WeakSpotDamage per click then relocate on the monster. Hp = BaseHp +
+   HpPerPlayer * #players at fight start. Broadcast BossState {phase, hp,
+   maxHp, endsAt} on every meaningful change (throttle hp to ~2/s max).
+   While the monster is near a plot it applies TEMPORARY VISUAL damage only:
+   smoke ParticleEmitters + dark crack overlay parts parented under a
+   "BossDamage" Model inside that plot — destroyed on fight end. NEVER touch
+   real plot parts or profile data. Win (hp<=0): SetSellBoost(WinSellMult,
+   EffectSeconds), profile.bossWins += 1 + MarkDirty + Sync for every player
+   who dealt any damage, victory flex + monster death burst. Lose: SetSellBoost
+   (LoseSellMult, EffectSeconds), monster stomps off + despawns. Then reroll
+   the interval. All state server-side; no new remotes beyond BossState.
+2. **calendar**: Services/StreakService.luau EDIT. On ClaimCalendar (token
+   bucket 2/s): today = os.time()//86400; if calendarLastClaim == today ->
+   error Notify "already claimed". If today - calendarLastClaim >
+   StreakCalendar.GraceDays -> calendarDay = 0 first (reset). calendarDay =
+   (calendarDay % 7) + 1; grant Rewards[calendarDay]: cash via
+   EconomyService.AddMoney; luckBoost -> profile.boosts.calendar_luck =
+   os.time() + BoostSeconds; legendary -> uniform-random non-secret tier-9
+   def via InventoryService.AddKeyboard(player, id, "calendar") (full
+   ceremony; at inventory cap fall back to cash = its sell value + Notify).
+   MarkDirty + Sync; flex server-wide on day-7 legendary.
+3. **weather**: Controllers/EventController.luau EDIT (client). Three new sky
+   presets in presetGoals + atmospherePresetGoals: "frost" (pale icy blue,
+   bright fog/haze), "static" (dark green-black, glitchy — plus a subtle
+   ColorCorrection flicker task like thunder), "overclock" (hot orange,
+   slight saturation push). Reuse the existing snapshot/restore mechanics
+   exactly; kill flicker tasks via the session counter like thunder does.
+4. **buddies**: Services/BuddyService.luau NEW + World/BuddyBuilder.luau NEW
+   + Services/TypingRaceService.luau EDIT (winner: profile.raceWins += 1
+   before MarkDirty/Sync — the win already Syncs via AddMoney).
+   BuddyService: GetMutationBonus(player) -> equipped buddy's
+   perk.mutationBonus or 0 (consumed by ProductionService hook, landed).
+   CheckUnlocks(player): compare profile stats (streakDays, raceWins,
+   bossWins, #setsClaimed, rebirths, likesGiven) against Config/Buddies earn
+   defs; newly earned -> profile.buddies[id] = true + celebratory Notify +
+   MarkDirty/Sync. Wire from DataService.OnProfileLoaded + a 60s sweep loop.
+   BuddyEquip remote (3/s bucket): validate owned id or nil ->
+   profile.equippedBuddy; rebuild visuals. Visuals via BuddyBuilder.Build(def)
+   (cute low-poly critter ~2 studs, body+accent colors, emoji face on a
+   SurfaceGui, idle bob via TweenService): one instance perched beside the
+   owner's Conveyor1 belt (anchored), one following the owner in the hub
+   (anchored PivotTo lerp on Heartbeat, offset behind the character,
+   plot-radius aware). Clean up on unequip/leave/plot rebuild
+   (PlotService.RebuildForProfile destroys the plot copy — re-perch by
+   listening to the same profile-load/rebuild paths or a simple 5s re-resolve
+   loop).
+5. **client**: Controllers/UIController.luau EDIT. (a) Boss: full-width HP
+   bar top-center during BossState fight (monster name "THOCK MONSTER",
+   segmented bar, shake on hits), warning banner, victory (+25% SELL 10min)
+   / defeat (-25%) result banners. (b) Calendar: a "📅" hotbar button opens a
+   7-day calendar panel (day cards, claimed = green check, today pulsing,
+   day 7 shows ⭐ LEGENDARY); Claim button -> ClaimCalendar; state from
+   snapshot.calendarDay/calendarLastClaim (today = os.time()//86400 locally).
+   (c) Buddies: a "🐹" panel listing Config/Buddies: owned -> Equip/Unequip
+   button (BuddyEquip), locked -> grey card with earn.label progress from
+   snapshot stats. Follow existing mkPanel/renderer conventions.
+6. init.server wiring (BossService, BuddyService appended): integration (me).
+
+Validation: node tools/check-luau.mjs && node tools/sim-economy.mjs && rojo
+build — all three before finishing any slot.

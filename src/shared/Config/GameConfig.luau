@@ -134,6 +134,47 @@ local GameConfig = {
 	Secrets = {
 		WholesomeLikes = 15, -- likesGiven needed for the Wholesome secret
 	},
+
+	-- ===== THOCK MONSTER boss (see BossService) =====
+	-- A monster attacks the plots; everyone types on it to win. Base damage is
+	-- TEMPORARY VISUALS ONLY — nobody ever loses items, money or progress.
+	Boss = {
+		MinIntervalSeconds = 2400, -- time between fights (rolled in this range)
+		MaxIntervalSeconds = 3600,
+		WarningSeconds = 20, -- "it's coming" siren before the fight starts
+		FightSeconds = 180,
+		BaseHp = 4_000, -- + HpPerPlayer * players present
+		HpPerPlayer = 3_000,
+		TypeDamageBase = 5, -- damage per accepted keypress near the monster...
+		TypeDamagePerTier = 2, -- ...+ this * your factory tier
+		DamageRadius = 70, -- studs from the monster within which typing counts
+		WeakSpotCount = 3, -- glowing keycaps on the monster (click for bonus)
+		WeakSpotDamage = 150, -- damage per weak-spot click (then it moves)
+		WinSellMult = 1.25, -- everyone sells for +25% after a win...
+		LoseSellMult = 0.75, -- ...or -25% after a loss
+		EffectSeconds = 600, -- how long the win/lose multiplier lasts
+	},
+
+	-- ===== 7-day streak calendar (see StreakService) =====
+	-- Sits on top of the daily streak: one claim per day, position advances
+	-- 1..7 then wraps. Missing more than GraceDays days resets to day 1.
+	StreakCalendar = {
+		GraceDays = 2, -- 48h grace before the calendar position resets
+		BoostLuckBonus = 3, -- luck granted by the "calendar_luck" boost days
+		BoostSeconds = 900,
+		-- One entry per day: kind "cash" (amount scales nothing — flat),
+		-- "luckBoost" (calendar_luck boost) or "legendary" (guaranteed tier-9
+		-- keyboard with the full ceremony).
+		Rewards = {
+			{ kind = "cash", amount = 2_500 },
+			{ kind = "cash", amount = 10_000 },
+			{ kind = "luckBoost" },
+			{ kind = "cash", amount = 40_000 },
+			{ kind = "luckBoost" },
+			{ kind = "cash", amount = 150_000 },
+			{ kind = "legendary" },
+		},
+	},
 }
 
 return GameConfig
