@@ -21,6 +21,7 @@ local IndexRewards = require(Shared:WaitForChild("Config"):WaitForChild("IndexRe
 local RestockShop = require(Shared:WaitForChild("Config"):WaitForChild("RestockShop"))
 local FactoryTiers = require(Shared:WaitForChild("Config"):WaitForChild("FactoryTiers"))
 local Sets = require(Shared:WaitForChild("Config"):WaitForChild("Sets"))
+local Buddies = require(Shared:WaitForChild("Config"):WaitForChild("Buddies"))
 local Catalog = require(Shared:WaitForChild("Catalog"))
 local RollLogic = require(Shared:WaitForChild("RollLogic"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
@@ -62,6 +63,12 @@ type GlobalRollPayload = {
 	rarityTier: number,
 	plotIndex: number?,
 	oddsDenominator: number,
+}
+type BossStatePayload = {
+	phase: string, -- "warning" | "fight" | "won" | "lost" | "idle"
+	hp: number,
+	maxHp: number,
+	endsAt: number, -- unix time the current phase ends
 }
 
 local restockOfferById: { [string]: typeof(RestockShop[1]) } = {}
@@ -1935,19 +1942,355 @@ local function buildFusionPanel()
 	renderers.fusion = renderFusion
 end
 
+-- ===== streak calendar panel (GameConfig.StreakCalendar, ClaimCalendar) =====
+
+local calendarContent: Frame
+
+type CalendarReward = { kind: string, amount: number? }
+
+-- Card label for GameConfig.StreakCalendar.Rewards[day]. Rewards is a
+-- mixed-shape config array (cash entries carry `amount`, the others don't),
+-- so it is read through a cast instead of relying on the inferred type.
+local function calendarRewardText(day: number): string
+	local reward = (GameConfig.StreakCalendar.Rewards :: any)[day] :: CalendarReward?
+	if reward == nil then
+		return "?"
+	end
+	if reward.kind == "cash" then
+		return "$" .. abbreviate(reward.amount or 0)
+	elseif reward.kind == "luckBoost" then
+		return `🍀 +{GameConfig.StreakCalendar.BoostLuckBonus} luck`
+	elseif reward.kind == "legendary" then
+		return "⭐ LEGENDARY"
+	end
+	return reward.kind
+end
+
+local function renderCalendar()
+	local p = profile
+	if not p then
+		return
+	end
+	for _, child in calendarContent:GetChildren() do
+		if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	-- Mirrors StreakService's claim rules: one claim per UTC day
+	-- (os.time() // 86400), position wraps 1..7, and missing more than
+	-- GraceDays days resets the next claim back to day 1.
+	local today = os.time() // 86400
+	local claimedToday = p.calendarLastClaim == today
+	local resetPending = p.calendarLastClaim > 0
+		and p.calendarDay > 0
+		and (today - p.calendarLastClaim) > GameConfig.StreakCalendar.GraceDays
+	local claimedThrough = if resetPending then 0 else p.calendarDay
+	local nextDay = if resetPending or p.calendarDay <= 0 then 1 else (p.calendarDay % 7) + 1
+
+	mkText(calendarContent, {
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = `Claim a reward every day — day 7 is a guaranteed LEGENDARY! ({GameConfig.StreakCalendar.GraceDays * 24}h grace)`,
+		TextScaled = false,
+		TextSize = 13,
+		TextColor3 = TEXT_DIM,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+
+	local row = mkFrame(calendarContent, {
+		Position = UDim2.fromOffset(0, 26),
+		Size = UDim2.new(1, 0, 0, 108),
+		BackgroundTransparency = 1,
+	})
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.Padding = UDim.new(0, 6)
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	rowLayout.Parent = row
+
+	for day = 1, 7 do
+		local claimed = day <= claimedThrough
+		local isToday = not claimedToday and day == nextDay
+		local card = mkFrame(row, {
+			Size = UDim2.fromOffset(57, 108),
+			LayoutOrder = day,
+			BackgroundColor3 = if claimed
+				then Color3.fromRGB(34, 58, 40)
+				elseif isToday then PANEL_BG2
+				else Color3.fromRGB(28, 30, 36),
+		})
+		corner(card, 10)
+		mkText(card, {
+			Size = UDim2.new(1, -6, 0, 18),
+			Position = UDim2.fromOffset(3, 6),
+			Text = `Day {day}`,
+			TextScaled = false,
+			TextSize = 13,
+			TextColor3 = if isToday then ACCENT elseif claimed then GOOD else TEXT_DIM,
+		})
+		mkText(card, {
+			Size = UDim2.new(1, -6, 0, 44),
+			Position = UDim2.fromOffset(3, 28),
+			Text = calendarRewardText(day),
+			TextScaled = false,
+			TextSize = if day == 7 then 13 else 14,
+			TextWrapped = true,
+			TextColor3 = if day == 7 then ACCENT elseif claimed then TEXT_DIM else TEXT_MAIN,
+		})
+		mkText(card, {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = UDim2.new(0.5, 0, 1, -6),
+			Size = UDim2.new(1, -6, 0, 20),
+			Text = if claimed then "✓" elseif isToday then "TODAY" else "",
+			TextScaled = false,
+			TextSize = if claimed then 18 else 12,
+			TextColor3 = if claimed then GOOD else ACCENT,
+		})
+		-- exactly one stroke per card (multiple UIStrokes don't stack)
+		if isToday then
+			local glow = stroke(card, ACCENT, 2)
+			task.spawn(function()
+				while card.Parent and glow.Parent do
+					TweenService:Create(glow, TweenInfo.new(0.8), { Transparency = 0.7 }):Play()
+					task.wait(0.8)
+					TweenService:Create(glow, TweenInfo.new(0.8), { Transparency = 0 }):Play()
+					task.wait(0.8)
+				end
+			end)
+		elseif claimed then
+			stroke(card, GOOD, 1)
+		elseif day == 7 then
+			stroke(card, ACCENT, 1)
+		end
+	end
+
+	local statusText: string
+	if claimedToday then
+		statusText = if p.calendarDay >= 7
+			then "All 7 days claimed — the calendar wraps to Day 1 tomorrow!"
+			else `Claimed! Come back tomorrow for day {nextDay}.`
+	elseif resetPending then
+		statusText = "The streak slept too long — starting fresh at Day 1."
+	else
+		statusText = `Day {nextDay} is ready to claim!`
+	end
+	mkText(calendarContent, {
+		Position = UDim2.fromOffset(0, 140),
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = statusText,
+		TextScaled = false,
+		TextSize = 14,
+		TextColor3 = if claimedToday then GOOD else TEXT_DIM,
+	})
+
+	local canClaim = not claimedToday
+	local claim = mkButton(calendarContent, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -4),
+		Size = UDim2.fromOffset(220, 48),
+		Text = if canClaim then `Claim Day {nextDay}!` else "Claimed today ✓",
+		BackgroundColor3 = if canClaim then ACCENT else PANEL_BG2,
+		TextColor3 = if canClaim then Color3.new(0.1, 0.1, 0.12) else TEXT_DIM,
+		Active = canClaim,
+		AutoButtonColor = canClaim,
+	}, function()
+		if canClaim then
+			Remotes.ClaimCalendar:FireServer()
+		end
+	end)
+	corner(claim, 12)
+end
+
+local function buildCalendarPanel()
+	local _panel, content = mkPanel("calendar", "📅 Streak Calendar", UDim2.fromOffset(460, 292))
+	calendarContent = content
+	renderers.calendar = renderCalendar
+end
+
+-- ===== thock buddies panel (Config/Buddies, BuddyEquip remote) =====
+
+local buddiesContent: Frame
+
+-- Progress toward a buddy's earn requirement, read straight from the
+-- snapshot. Kinds documented in Config/Buddies (BuddyService owns grants;
+-- this is display-only).
+local function buddyEarnProgress(p: Types.Profile, earn: typeof(Buddies[1].earn)): number
+	if earn.kind == "streak" then
+		return p.streakDays
+	elseif earn.kind == "raceWins" then
+		return p.raceWins
+	elseif earn.kind == "bossWins" then
+		return p.bossWins
+	elseif earn.kind == "sets" then
+		local n = 0
+		for _ in p.setsClaimed do
+			n += 1
+		end
+		return n
+	elseif earn.kind == "rebirths" then
+		return p.rebirths
+	elseif earn.kind == "likesGiven" then
+		return p.likesGiven
+	end
+	return 0
+end
+
+local function renderBuddies()
+	local p = profile
+	if not p then
+		return
+	end
+	local scroll = buddiesContent:FindFirstChild("Scroll") :: ScrollingFrame
+	for _, child in scroll:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	local y = 0
+	for _, def in Buddies do
+		local owned = p.buddies[def.id] == true
+		local equipped = owned and p.equippedBuddy == def.id
+		local card = mkFrame(scroll, {
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, -8, 0, 84),
+			BackgroundColor3 = if owned then PANEL_BG2 else Color3.fromRGB(28, 30, 36),
+		})
+		corner(card, 10)
+		if equipped then
+			stroke(card, GOOD, 2)
+		elseif owned then
+			stroke(card, def.accentColor, 1)
+		end
+		mkText(card, {
+			Position = UDim2.fromOffset(8, 16),
+			Size = UDim2.fromOffset(52, 52),
+			Text = def.emoji,
+			TextScaled = false,
+			TextSize = 34,
+			TextTransparency = if owned then 0 else 0.4,
+		})
+		mkText(card, {
+			Position = UDim2.fromOffset(66, 8),
+			Size = UDim2.new(1, -200, 0, 22),
+			Text = def.name .. (if equipped then " · EQUIPPED" else ""),
+			TextScaled = false,
+			TextSize = 16,
+			TextColor3 = if equipped then GOOD elseif owned then TEXT_MAIN else TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		mkText(card, {
+			Position = UDim2.fromOffset(66, 32),
+			Size = UDim2.new(1, -200, 0, 18),
+			Text = `✨ +{math.floor(def.perk.mutationBonus * 100 + 0.5)}% mutation chance on your belt`,
+			TextScaled = false,
+			TextSize = 13,
+			TextColor3 = if owned then ACCENT else TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		if owned then
+			mkText(card, {
+				Position = UDim2.fromOffset(66, 54),
+				Size = UDim2.new(1, -200, 0, 16),
+				Text = "Earned: " .. def.earn.label,
+				TextScaled = false,
+				TextSize = 12,
+				TextColor3 = TEXT_DIM,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+			local button = mkButton(card, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(110, 40),
+				Text = if equipped then "Unequip" else "Equip",
+				TextScaled = false,
+				TextSize = 15,
+				BackgroundColor3 = if equipped then PANEL_BG else GOOD,
+				TextColor3 = if equipped then TEXT_MAIN else Color3.new(0.1, 0.1, 0.12),
+			}, function()
+				Remotes.BuddyEquip:FireServer(if equipped then nil else def.id)
+			end)
+			corner(button, 10)
+		else
+			-- locked: grey card with the earn label + snapshot progress
+			local progress = math.min(buddyEarnProgress(p, def.earn), def.earn.count)
+			local frac = math.clamp(progress / math.max(def.earn.count, 1), 0, 1)
+			mkText(card, {
+				Position = UDim2.fromOffset(66, 54),
+				Size = UDim2.new(1, -200, 0, 16),
+				Text = `🔒 {def.earn.label}`,
+				TextScaled = false,
+				TextSize = 12,
+				TextColor3 = TEXT_DIM,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+			local barBg = mkFrame(card, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -52, 0.5, 0),
+				Size = UDim2.fromOffset(66, 10),
+				BackgroundColor3 = Color3.fromRGB(20, 22, 27),
+			})
+			corner(barBg, 5)
+			if frac > 0 then
+				local fill = mkFrame(barBg, {
+					Size = UDim2.new(frac, 0, 1, 0),
+					BackgroundColor3 = if frac >= 1 then GOOD else ACCENT,
+				})
+				corner(fill, 5)
+			end
+			mkText(card, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(40, 16),
+				Text = `{progress}/{def.earn.count}`,
+				TextScaled = false,
+				TextSize = 12,
+				TextColor3 = if frac >= 1 then GOOD else TEXT_DIM,
+			})
+		end
+		y += 92
+	end
+	scroll.CanvasSize = UDim2.fromOffset(0, y + 8)
+end
+
+local function buildBuddiesPanel()
+	local _panel, content = mkPanel("buddies", "🐹 Thock Buddies", UDim2.fromOffset(430, 520))
+	buddiesContent = content
+	mkText(content, {
+		Size = UDim2.new(1, 0, 0, 32),
+		Text = "Cute helpers you EARN by playing (never sold!). Your equipped buddy rides the conveyor and polishes boards for bonus mutations.",
+		TextScaled = false,
+		TextSize = 13,
+		TextWrapped = true,
+		TextColor3 = TEXT_DIM,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	})
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Scroll"
+	scroll.Position = UDim2.fromOffset(0, 38)
+	scroll.Size = UDim2.new(1, 0, 1, -42)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.Parent = content
+	renderers.buddies = renderBuddies
+end
+
 -- ===== button rail =====
 
 local function buildRail()
 	local rail = mkFrame(screenGui, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(60, 6 * 66),
+		Size = UDim2.fromOffset(60, 8 * 66),
 		BackgroundTransparency = 1,
 	})
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = rail
-	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" }, { "restock", "🎁" } } do
+	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" }, { "restock", "🎁" }, { "calendar", "📅" }, { "buddies", "🐹" } } do
 		local b = mkButton(rail, {
 			Size = UDim2.fromOffset(56, 56),
 			Text = entry[2],
@@ -2559,6 +2902,256 @@ local function showTypeReward(amount: number)
 	end)
 end
 
+-- ===== THOCK MONSTER boss HUD (BossState remote) =====
+
+-- BossService broadcasts { phase, hp, maxHp, endsAt } on every meaningful
+-- change (hp throttled to ~2/s server-side). This HUD is pure presentation:
+-- a siren banner during the warning, a segmented HP bar during the fight
+-- (shakes when hp drops), and win/lose result banners built from
+-- GameConfig.Boss so the numbers never drift from the server's boost.
+
+-- Below the event banner band (EventController BANNER_Y=92, ~54 tall) and
+-- the global-roll marquee (y=96) — weather and boss fights can overlap.
+local BOSS_BAR_Y = 156
+local BOSS_SEGMENTS = 24
+local BOSS_SEG_OFF = Color3.fromRGB(48, 34, 40)
+
+local bossBar: Frame
+local bossBarTimer: TextLabel
+local bossBarHpText: TextLabel
+local bossSegments: { Frame } = {}
+local bossPhase = "idle"
+local bossLastHp = -1
+local bossEndsAt = 0
+-- Bumping the token kills the countdown/banner loop of a stale phase, the
+-- same pattern the money count-up uses.
+local bossTickToken = 0
+local bossShakeToken = 0
+local bossBanner: Frame? = nil
+
+local function buildBossHud()
+	bossBar = mkFrame(screenGui, {
+		Name = "BossBar",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, BOSS_BAR_Y),
+		Size = UDim2.new(0.62, 0, 0, 64),
+		BackgroundColor3 = PANEL_BG,
+		BackgroundTransparency = 0.12,
+		Visible = false,
+		ZIndex = 8,
+	})
+	corner(bossBar, 12)
+	stroke(bossBar, BAD, 2)
+	mkText(bossBar, {
+		Position = UDim2.fromOffset(12, 4),
+		Size = UDim2.new(1, -120, 0, 22),
+		Text = "👹 THOCK MONSTER",
+		TextColor3 = BAD,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 8,
+	})
+	bossBarTimer = mkText(bossBar, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -12, 0, 4),
+		Size = UDim2.fromOffset(90, 22),
+		Text = "",
+		TextColor3 = ACCENT,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ZIndex = 8,
+	})
+	local segRow = mkFrame(bossBar, {
+		Position = UDim2.fromOffset(12, 30),
+		Size = UDim2.new(1, -24, 0, 16),
+		BackgroundColor3 = Color3.fromRGB(20, 22, 27),
+		ZIndex = 8,
+	})
+	corner(segRow, 6)
+	local segLayout = Instance.new("UIListLayout")
+	segLayout.FillDirection = Enum.FillDirection.Horizontal
+	segLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	segLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	segLayout.Padding = UDim.new(0, 2)
+	segLayout.Parent = segRow
+	local segPad = Instance.new("UIPadding")
+	segPad.PaddingLeft = UDim.new(0, 2)
+	segPad.PaddingRight = UDim.new(0, 2)
+	segPad.Parent = segRow
+	table.clear(bossSegments)
+	for i = 1, BOSS_SEGMENTS do
+		local seg = mkFrame(segRow, {
+			Size = UDim2.new(1 / BOSS_SEGMENTS, -2, 1, -4),
+			LayoutOrder = i,
+			BackgroundColor3 = BAD,
+			ZIndex = 9,
+		})
+		corner(seg, 3)
+		table.insert(bossSegments, seg)
+	end
+	bossBarHpText = mkText(bossBar, {
+		Position = UDim2.fromOffset(12, 47),
+		Size = UDim2.new(1, -24, 0, 14),
+		Text = "",
+		TextScaled = false,
+		TextSize = 12,
+		TextColor3 = TEXT_DIM,
+		ZIndex = 8,
+	})
+end
+
+local function setBossHp(hp: number, maxHp: number)
+	local frac = math.clamp(hp / math.max(maxHp, 1), 0, 1)
+	local lit = if hp > 0 then math.max(math.ceil(frac * BOSS_SEGMENTS), 1) else 0
+	for i, seg in bossSegments do
+		seg.BackgroundColor3 = if i <= lit then BAD else BOSS_SEG_OFF
+	end
+	bossBarHpText.Text = `{abbreviate(math.max(hp, 0))} / {abbreviate(maxHp)} — type on it & smash the glowing keycaps!`
+end
+
+local function shakeBossBar()
+	bossShakeToken += 1
+	local token = bossShakeToken
+	task.spawn(function()
+		local rng = Random.new()
+		for _ = 1, 4 do
+			if token ~= bossShakeToken or not bossBar.Visible then
+				break
+			end
+			bossBar.Position = UDim2.new(0.5, rng:NextInteger(-6, 6), 0, BOSS_BAR_Y + rng:NextInteger(-3, 3))
+			task.wait(0.04)
+		end
+		if token == bossShakeToken then
+			bossBar.Position = UDim2.new(0.5, 0, 0, BOSS_BAR_Y)
+		end
+	end)
+end
+
+local function clearBossBanner()
+	if bossBanner then
+		bossBanner:Destroy()
+		bossBanner = nil
+	end
+end
+
+-- One boss banner at a time, sliding in from the top (marqueeToast-style but
+-- lower, so a simultaneous global-roll marquee doesn't overlap it). With
+-- holdSeconds nil the banner stays until the next phase clears it.
+local function showBossBanner(message: string, textColor: Color3, bgColor: Color3, holdSeconds: number?): TextLabel
+	clearBossBanner()
+	local banner = mkFrame(screenGui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, -60),
+		Size = UDim2.fromOffset(620, 48),
+		BackgroundColor3 = bgColor,
+		BackgroundTransparency = 0.08,
+		ZIndex = 9,
+	})
+	corner(banner, 12)
+	stroke(banner, textColor, 2)
+	local lbl = mkText(banner, {
+		Size = UDim2.new(1, -20, 1, -10),
+		Position = UDim2.fromOffset(10, 5),
+		Text = message,
+		TextColor3 = textColor,
+		ZIndex = 9,
+	})
+	bossBanner = banner
+	-- Lands below the boss HP bar (BOSS_BAR_Y=156, 64 tall) so warning/result
+	-- banners never cover the bar.
+	TweenService:Create(banner, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Position = UDim2.new(0.5, 0, 0, 232),
+	}):Play()
+	if holdSeconds then
+		task.delay(holdSeconds, function()
+			if bossBanner ~= banner or banner.Parent == nil then
+				return
+			end
+			TweenService:Create(banner, TweenInfo.new(0.3), { Position = UDim2.new(0.5, 0, 0, -60) }):Play()
+			task.delay(0.35, function()
+				if bossBanner == banner then
+					bossBanner = nil
+				end
+				banner:Destroy()
+			end)
+		end)
+	end
+	return lbl
+end
+
+local function handleBossState(payload: BossStatePayload)
+	local phase = payload.phase
+	local hp = if typeof(payload.hp) == "number" then payload.hp else 0
+	local maxHp = if typeof(payload.maxHp) == "number" and payload.maxHp > 0 then payload.maxHp else 1
+	bossEndsAt = if typeof(payload.endsAt) == "number" then payload.endsAt else 0
+
+	if phase == "fight" then
+		if bossPhase ~= "fight" then
+			clearBossBanner()
+			bossBar.Visible = true
+			bossLastHp = maxHp
+			bossTickToken += 1
+			local token = bossTickToken
+			task.spawn(function()
+				while token == bossTickToken and bossBar.Visible do
+					bossBarTimer.Text = "⏱ " .. formatClock(bossEndsAt - os.time())
+					task.wait(0.5)
+				end
+			end)
+		end
+		setBossHp(hp, maxHp)
+		if hp < bossLastHp then
+			shakeBossBar()
+		end
+		bossLastHp = hp
+	elseif phase == "warning" then
+		if bossPhase ~= "warning" then
+			bossBar.Visible = false
+			bossTickToken += 1
+			local token = bossTickToken
+			local lbl = showBossBanner("⚠ THE THOCK MONSTER IS COMING! ⚠", BAD, Color3.fromRGB(90, 40, 45))
+			task.spawn(function()
+				while token == bossTickToken and lbl.Parent ~= nil do
+					local remaining = math.max(bossEndsAt - os.time(), 0)
+					lbl.Text = `⚠ THE THOCK MONSTER IS COMING IN {remaining}s — GET READY TO TYPE! ⚠`
+					task.wait(0.5)
+				end
+			end)
+		end
+	elseif phase == "won" then
+		if bossPhase ~= "won" then
+			bossTickToken += 1
+			bossBar.Visible = false
+			local pct = math.floor((GameConfig.Boss.WinSellMult - 1) * 100 + 0.5)
+			local minutes = math.floor(GameConfig.Boss.EffectSeconds / 60)
+			showBossBanner(
+				`🏆 THOCK MONSTER DEFEATED! +{pct}% SELL VALUE for {minutes} min!`,
+				ACCENT,
+				Color3.fromRGB(80, 65, 20),
+				6
+			)
+			SoundController.PlayRevealArpeggio(9)
+		end
+	elseif phase == "lost" then
+		if bossPhase ~= "lost" then
+			bossTickToken += 1
+			bossBar.Visible = false
+			local pct = math.floor((1 - GameConfig.Boss.LoseSellMult) * 100 + 0.5)
+			local minutes = math.floor(GameConfig.Boss.EffectSeconds / 60)
+			showBossBanner(
+				`💥 The monster stomped away… -{pct}% sell value for {minutes} min. Next time!`,
+				Color3.fromRGB(255, 180, 180),
+				Color3.fromRGB(90, 40, 45),
+				6
+			)
+		end
+	else
+		-- "idle" (or anything unknown): clear all boss UI
+		bossTickToken += 1
+		bossBar.Visible = false
+		clearBossBanner()
+	end
+	bossPhase = phase
+end
+
 -- ===== wiring =====
 
 function UIController.Start()
@@ -2577,8 +3170,11 @@ function UIController.Start()
 	buildShopPanel()
 	buildRestockPanel()
 	buildFusionPanel()
+	buildCalendarPanel()
+	buildBuddiesPanel()
 	buildRail()
 	buildToasts()
+	buildBossHud()
 	watchSellZone()
 	watchRobuxShopPad()
 	watchFusionForgePad()
@@ -2658,6 +3254,14 @@ function UIController.Start()
 		if typeof(amount) == "number" and amount > 0 then
 			showTypeReward(amount)
 		end
+	end)
+
+	-- THOCK MONSTER fight updates: warning siren, HP bar, result banners.
+	Remotes.BossState.OnClientEvent:Connect(function(payload: BossStatePayload)
+		if typeof(payload) ~= "table" or typeof(payload.phase) ~= "string" then
+			return
+		end
+		handleBossState(payload)
 	end)
 
 	Remotes.OfflineReport.OnClientEvent:Connect(showOfflineReport)

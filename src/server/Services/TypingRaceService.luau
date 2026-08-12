@@ -5,7 +5,8 @@
 -- runs. Each ACCEPTED keypress (EquipService.OnTypeAccepted — already
 -- rate-limited and equip-validated) scores 1 * (1 + rarityTier / 12), so
 -- rarer boards type "heavier". Winner takes
--- GameConfig.Race.BaseReward * their factory tier in cash.
+-- GameConfig.Race.BaseReward * their factory tier in cash, plus
+-- profile.raceWins += 1 (Phase 5 — feeds Thock Buddy unlocks).
 --
 -- Clients render everything from the RaceState remote:
 --   { phase = "joining",  endsAt }                    -- join window open
@@ -177,6 +178,11 @@ local function finishRace()
 	if winner ~= nil and winner.score > 0 and winner.player.Parent ~= nil then
 		local profile = DataService.GetProfile(winner.player)
 		if profile ~= nil then
+			-- Phase 5: race wins count toward Thock Buddy unlocks (Sparky).
+			-- Bumped BEFORE AddMoney — its MarkDirty + Sync carries the new
+			-- value out; BuddyService's sweep grants the buddy shortly after.
+			-- (`or 0` self-heals saves predating the raceWins reconcile.)
+			profile.raceWins = (profile.raceWins or 0) + 1
 			local reward = GameConfig.Race.BaseReward * profile.upgrades.factoryTier
 			EconomyService.AddMoney(winner.player, reward)
 			Remotes.Notify:FireAllClients(

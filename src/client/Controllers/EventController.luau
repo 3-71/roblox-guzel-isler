@@ -3,9 +3,13 @@
 -- Watches the Workspace attributes EventService publishes (ActiveEventId /
 -- ActiveEventUntil), shows a full-width banner under the money HUD with a
 -- live countdown, and applies a Lighting preset per the event's `sky`
--- ("storm" / "golden"). Every Lighting property is snapshotted before it is
--- touched and restored exactly when the event ends. Handles joining
--- mid-event and one event replacing another while active.
+-- ("storm" / "golden" / "frost" / "static" / "overclock"). Every Lighting
+-- property is snapshotted before it is touched and restored exactly when the
+-- event ends. Handles joining mid-event and one event replacing another
+-- while active. "static" and "overclock" additionally drive a controller-
+-- owned ColorCorrectionEffect (created on demand, destroyed on restore);
+-- "static" runs a subtle flicker task killed via the session counter, the
+-- same way the storm thunder task is.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -41,6 +45,11 @@ local countdownLabel: TextLabel
 local session = 0
 local activeEventId: string? = nil
 local bannerShown = false
+
+-- controller-owned ColorCorrectionEffect for the "static"/"overclock" skies.
+-- We create it ourselves (so there is nothing to snapshot): tween to the
+-- preset's goals on apply, tween back to neutral and destroy on restore.
+local colorCorrection: ColorCorrectionEffect? = nil
 
 -- exact pre-event value of every Lighting property we've touched
 local lightingSnapshot: { [string]: any } = {}
@@ -82,6 +91,31 @@ local function presetGoals(sky: string): { [string]: any }
 			OutdoorAmbient = Color3.fromRGB(168, 132, 86),
 			ClockTime = 17,
 		}
+	elseif sky == "frost" then
+		-- Cold Snap: pale icy blue, dense BRIGHT haze (fog goals are the
+		-- fallback for places without an Atmosphere child)
+		return {
+			Ambient = Color3.fromRGB(140, 168, 196),
+			OutdoorAmbient = Color3.fromRGB(158, 186, 214),
+			FogColor = Color3.fromRGB(210, 232, 250),
+			FogEnd = 320,
+		}
+	elseif sky == "static" then
+		-- Static Surge: dark green-black glitch mood
+		return {
+			Ambient = Color3.fromRGB(30, 46, 34),
+			OutdoorAmbient = Color3.fromRGB(38, 58, 42),
+			FogColor = Color3.fromRGB(12, 24, 16),
+			FogEnd = 360,
+		}
+	elseif sky == "overclock" then
+		-- Overclocked: hot orange heat-haze
+		return {
+			Ambient = Color3.fromRGB(172, 108, 56),
+			OutdoorAmbient = Color3.fromRGB(190, 122, 62),
+			FogColor = Color3.fromRGB(120, 52, 20),
+			FogEnd = 600,
+		}
 	end
 	return {}
 end
@@ -101,8 +135,75 @@ local function atmospherePresetGoals(sky: string): { [string]: any }
 			Haze = 1.8,
 			Glare = 0.32,
 		}
+	elseif sky == "frost" then
+		return {
+			Density = 0.5,
+			Color = Color3.fromRGB(214, 236, 252),
+			Decay = Color3.fromRGB(170, 205, 235),
+			Haze = 3.2,
+			Glare = 0.12,
+		}
+	elseif sky == "static" then
+		return {
+			Density = 0.44,
+			Color = Color3.fromRGB(78, 112, 84),
+			Decay = Color3.fromRGB(10, 22, 14),
+			Haze = 2.4,
+			Glare = 0,
+		}
+	elseif sky == "overclock" then
+		return {
+			Color = Color3.fromRGB(255, 158, 84),
+			Haze = 2,
+			Glare = 0.42,
+		}
 	end
 	return {}
+end
+
+-- Goals for the controller-owned ColorCorrectionEffect. Only "static" and
+-- "overclock" use it; every other sky tweens it back to neutral (see
+-- CC_NEUTRAL) so one event can replace another cleanly.
+local CC_NEUTRAL: { [string]: any } = {
+	Brightness = 0,
+	Contrast = 0,
+	Saturation = 0,
+	TintColor = Color3.fromRGB(255, 255, 255),
+}
+
+local function colorCorrectionGoals(sky: string): { [string]: any }
+	if sky == "static" then
+		-- washed-out green shift; the flicker task adds the glitch pops
+		return {
+			Saturation = -0.3,
+			Contrast = 0.15,
+			TintColor = Color3.fromRGB(205, 245, 215),
+		}
+	elseif sky == "overclock" then
+		-- slight saturation push + warm tint
+		return {
+			Saturation = 0.25,
+			Contrast = 0.08,
+			TintColor = Color3.fromRGB(255, 234, 214),
+		}
+	end
+	return {}
+end
+
+local function ensureColorCorrection(): ColorCorrectionEffect
+	local existing = colorCorrection
+	if existing and existing.Parent then
+		return existing
+	end
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Name = "EventColorCorrection"
+	cc.Brightness = 0
+	cc.Contrast = 0
+	cc.Saturation = 0
+	cc.TintColor = Color3.fromRGB(255, 255, 255)
+	cc.Parent = Lighting
+	colorCorrection = cc
+	return cc
 end
 
 local function applyLighting(def: typeof(Events[1]))
@@ -139,6 +240,19 @@ local function applyLighting(def: typeof(Events[1]))
 		end
 		TweenService:Create(atmosphere, TRANSITION_INFO, combinedAtmosphere):Play()
 	end
+
+	local ccGoals = colorCorrectionGoals(def.sky)
+	if next(ccGoals) ~= nil then
+		-- unset props tween to neutral so a preceding preset's values clear
+		local combinedCC: { [string]: any } = table.clone(CC_NEUTRAL)
+		for prop, value in ccGoals do
+			combinedCC[prop] = value
+		end
+		TweenService:Create(ensureColorCorrection(), TRANSITION_INFO, combinedCC):Play()
+	elseif colorCorrection and colorCorrection.Parent then
+		-- this sky doesn't use color correction; fade any leftover to neutral
+		TweenService:Create(colorCorrection, TRANSITION_INFO, table.clone(CC_NEUTRAL)):Play()
+	end
 end
 
 local function restoreLighting()
@@ -151,6 +265,9 @@ local function restoreLighting()
 	local atmosphereGoals: { [string]: any } = table.clone(atmosphereSnapshot)
 	if atmosphere and next(atmosphereGoals) ~= nil then
 		TweenService:Create(atmosphere, TRANSITION_INFO, atmosphereGoals):Play()
+	end
+	if colorCorrection and colorCorrection.Parent then
+		TweenService:Create(colorCorrection, TRANSITION_INFO, table.clone(CC_NEUTRAL)):Play()
 	end
 	local mySession = session
 	task.delay(TRANSITION_SECONDS + 0.1, function()
@@ -166,6 +283,10 @@ local function restoreLighting()
 			for prop, value in atmosphereGoals do
 				(atmosphere :: any)[prop] = value
 			end
+		end
+		if colorCorrection then
+			colorCorrection:Destroy()
+			colorCorrection = nil
 		end
 		table.clear(lightingSnapshot)
 		table.clear(atmosphereSnapshot)
@@ -187,6 +308,40 @@ local function thunderLoop(mySession: number)
 		sound.Parent = SoundService
 		sound:Play()
 		Debris:AddItem(sound, 10)
+	end
+end
+
+-- ===== static flicker ("static" preset) =====
+
+-- Subtle glitchy brightness pops on the controller-owned ColorCorrection.
+-- Same lifecycle as thunderLoop: spawned per event, killed when the session
+-- counter bumps. Writes only Brightness, which no preset tweens after the
+-- initial 2s transition (the first wait always outlasts it).
+local function flickerLoop(mySession: number)
+	while session == mySession do
+		task.wait(rng:NextNumber(2.2, 5))
+		if session ~= mySession then
+			break
+		end
+		local cc = colorCorrection
+		if cc == nil or cc.Parent == nil then
+			continue -- effect not built yet (transition edge); retry next pass
+		end
+		for _ = 1, rng:NextInteger(2, 4) do
+			cc.Brightness = rng:NextNumber(0.03, 0.09)
+			task.wait(rng:NextNumber(0.03, 0.08))
+			if session ~= mySession or cc.Parent == nil then
+				break
+			end
+			cc.Brightness = 0
+			task.wait(rng:NextNumber(0.05, 0.12))
+			if session ~= mySession or cc.Parent == nil then
+				break
+			end
+		end
+		if cc.Parent ~= nil then
+			cc.Brightness = 0
+		end
 	end
 end
 
@@ -316,6 +471,8 @@ recheck = function()
 		task.spawn(countdownLoop, session)
 		if def.sky == "storm" then
 			task.spawn(thunderLoop, session)
+		elseif def.sky == "static" then
+			task.spawn(flickerLoop, session)
 		end
 	else
 		if activeEventId == nil then

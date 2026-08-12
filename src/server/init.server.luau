@@ -39,6 +39,9 @@ local serviceModules = {
 	require(Services.SecretService),
 	require(Services.SetsService),
 	require(Services.FusionService),
+	-- phase 5 (BossService needs EquipService + PlotService inited: both above)
+	require(Services.BossService),
+	require(Services.BuddyService),
 }
 
 for _, service in serviceModules do
