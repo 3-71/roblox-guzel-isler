@@ -157,7 +157,13 @@ unlock sweep at 60s). Fleet: 5 builders + 2 verifiers; verifier findings
 fixed: boss HUD y-collision with event banner (bar y=156, banners y=232),
 mid-fight-joiner rebroadcast (3s keep-alive + siren-beat resend), buddy
 park height vs FallenPartsDestroyHeight (-420), empty-server interval
-re-roll. BossService + BuddyService wired into init.server (24 services).
+re-roll. PHASE 6: Harmony obelisk (crystal at hub angle 101.25° r47 fills
+from everyone's produce/sell/type via lazy AddPoints hooks + OnTypeAccepted;
+full = EventService.ForceEvent random reward, goal *= 1.25 per fill,
+session-only, Workspace attrs HarmonyPoints/HarmonyGoal) and 12 titles &
+auras (Config/Titles, TitleService sweep + TitleEquip, TitleTag billboard
+above head + TitleAura particles ≤8/s, rainbow hue-cycler; 👑 UI panel,
+rail is now 9 buttons). 26 services in init.server.
 A 31-agent adversarial review fixed 14 confirmed bugs earlier; fleets run
 build → verify as standard (script kept at tools/phase5-fleet.mjs as a
 template).

@@ -22,6 +22,7 @@ local RestockShop = require(Shared:WaitForChild("Config"):WaitForChild("RestockS
 local FactoryTiers = require(Shared:WaitForChild("Config"):WaitForChild("FactoryTiers"))
 local Sets = require(Shared:WaitForChild("Config"):WaitForChild("Sets"))
 local Buddies = require(Shared:WaitForChild("Config"):WaitForChild("Buddies"))
+local Titles = require(Shared:WaitForChild("Config"):WaitForChild("Titles"))
 local Catalog = require(Shared:WaitForChild("Catalog"))
 local RollLogic = require(Shared:WaitForChild("RollLogic"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
@@ -2278,19 +2279,218 @@ local function buildBuddiesPanel()
 	renderers.buddies = renderBuddies
 end
 
+-- ===== titles & auras panel (Config/Titles, TitleEquip remote) =====
+
+local titlesContent: Frame
+
+-- Client-side twin of TitleService.StatFor: progress toward a title's earn
+-- requirement, read straight from the snapshot (server owns grants; this is
+-- display-only and MUST stay in lockstep with the server mapping).
+local function titleStatFor(p: Types.Profile, kind: string): number
+	if kind == "unique" then
+		local n = 0
+		for _ in p.collection do
+			n += 1
+		end
+		return n
+	elseif kind == "sets" then
+		local n = 0
+		for _ in p.setsClaimed do
+			n += 1
+		end
+		return n
+	elseif kind == "secrets" then
+		-- Secret boards carry `secret = true` on their Keyboards def and
+		-- only enter the collection via SecretService rituals.
+		local n = 0
+		for id in p.collection do
+			local def = Catalog.GetKeyboard(id)
+			if def and def.secret == true then
+				n += 1
+			end
+		end
+		return n
+	elseif kind == "earned" then
+		return p.totalEarned
+	elseif kind == "rebirths" then
+		return p.rebirths
+	elseif kind == "bossWins" then
+		return p.bossWins
+	elseif kind == "raceWins" then
+		return p.raceWins
+	elseif kind == "likesGiven" then
+		return p.likesGiven
+	elseif kind == "streakDays" then
+		return p.streakDays
+	end
+	return 0
+end
+
+-- Aura kind -> flavor line shown on each card ("none" stays plain).
+local AURA_LABELS: { [string]: string } = {
+	sparkle = "✨ sparkle aura",
+	gold = "🌟 gold aura",
+	fire = "🔥 fire aura",
+	hearts = "💗 hearts aura",
+	storm = "⚡ storm aura",
+	rainbow = "🌈 rainbow aura",
+}
+
+local function renderTitles()
+	local p = profile
+	if not p then
+		return
+	end
+	local scroll = titlesContent:FindFirstChild("Scroll") :: ScrollingFrame
+	for _, child in scroll:GetChildren() do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	local y = 0
+	for _, def in Titles do
+		local owned = p.titles[def.id] == true
+		local equipped = owned and p.equippedTitle == def.id
+		local card = mkFrame(scroll, {
+			Position = UDim2.fromOffset(0, y),
+			Size = UDim2.new(1, -8, 0, 84),
+			BackgroundColor3 = if owned then PANEL_BG2 else Color3.fromRGB(28, 30, 36),
+		})
+		corner(card, 10)
+		if equipped then
+			stroke(card, GOOD, 2)
+		elseif owned then
+			stroke(card, def.color, 1)
+		end
+		mkText(card, {
+			Position = UDim2.fromOffset(8, 16),
+			Size = UDim2.fromOffset(52, 52),
+			Text = "👑",
+			TextScaled = false,
+			TextSize = 34,
+			TextTransparency = if owned then 0 else 0.4,
+		})
+		mkText(card, {
+			Position = UDim2.fromOffset(66, 8),
+			Size = UDim2.new(1, -200, 0, 22),
+			Text = def.name .. (if equipped then " · EQUIPPED" else ""),
+			TextScaled = false,
+			TextSize = 16,
+			TextColor3 = if owned then def.color else TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		mkText(card, {
+			Position = UDim2.fromOffset(66, 32),
+			Size = UDim2.new(1, -200, 0, 18),
+			Text = AURA_LABELS[def.aura] or "nameplate only",
+			TextScaled = false,
+			TextSize = 13,
+			TextColor3 = if owned then ACCENT else TEXT_DIM,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		if owned then
+			mkText(card, {
+				Position = UDim2.fromOffset(66, 54),
+				Size = UDim2.new(1, -200, 0, 16),
+				Text = "Earned: " .. def.earn.label,
+				TextScaled = false,
+				TextSize = 12,
+				TextColor3 = TEXT_DIM,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+			local button = mkButton(card, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(110, 40),
+				Text = if equipped then "Unequip" else "Equip",
+				TextScaled = false,
+				TextSize = 15,
+				BackgroundColor3 = if equipped then PANEL_BG else GOOD,
+				TextColor3 = if equipped then TEXT_MAIN else Color3.new(0.1, 0.1, 0.12),
+			}, function()
+				Remotes.TitleEquip:FireServer(if equipped then nil else def.id)
+			end)
+			corner(button, 10)
+		else
+			-- locked: grey card with the earn label + snapshot progress
+			local progress = math.min(titleStatFor(p, def.earn.kind), def.earn.count)
+			local frac = math.clamp(progress / math.max(def.earn.count, 1), 0, 1)
+			mkText(card, {
+				Position = UDim2.fromOffset(66, 54),
+				Size = UDim2.new(1, -200, 0, 16),
+				Text = `🔒 {def.earn.label}`,
+				TextScaled = false,
+				TextSize = 12,
+				TextColor3 = TEXT_DIM,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+			local barBg = mkFrame(card, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -52, 0.5, 0),
+				Size = UDim2.fromOffset(66, 10),
+				BackgroundColor3 = Color3.fromRGB(20, 22, 27),
+			})
+			corner(barBg, 5)
+			if frac > 0 then
+				local fill = mkFrame(barBg, {
+					Size = UDim2.new(frac, 0, 1, 0),
+					BackgroundColor3 = if frac >= 1 then GOOD else ACCENT,
+				})
+				corner(fill, 5)
+			end
+			mkText(card, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(40, 16),
+				Text = `{abbreviate(progress)}/{abbreviate(def.earn.count)}`,
+				TextScaled = false,
+				TextSize = 12,
+				TextColor3 = if frac >= 1 then GOOD else TEXT_DIM,
+			})
+		end
+		y += 92
+	end
+	scroll.CanvasSize = UDim2.fromOffset(0, y + 8)
+end
+
+local function buildTitlesPanel()
+	local _panel, content = mkPanel("titles", "👑 Titles & Auras", UDim2.fromOffset(430, 520))
+	titlesContent = content
+	mkText(content, {
+		Size = UDim2.new(1, 0, 0, 32),
+		Text = "Pure flex you EARN by playing: a nameplate above your head plus a particle aura. Once earned, a title is yours forever.",
+		TextScaled = false,
+		TextSize = 13,
+		TextWrapped = true,
+		TextColor3 = TEXT_DIM,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	})
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Scroll"
+	scroll.Position = UDim2.fromOffset(0, 38)
+	scroll.Size = UDim2.new(1, 0, 1, -42)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.Parent = content
+	renderers.titles = renderTitles
+end
+
 -- ===== button rail =====
 
 local function buildRail()
 	local rail = mkFrame(screenGui, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(60, 8 * 66),
+		Size = UDim2.fromOffset(60, 9 * 66),
 		BackgroundTransparency = 1,
 	})
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = rail
-	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" }, { "restock", "🎁" }, { "calendar", "📅" }, { "buddies", "🐹" } } do
+	for _, entry in { { "inventory", "⌨" }, { "collection", "📖" }, { "odds", "🎲" }, { "rebirth", "⟳" }, { "shop", "🛒" }, { "restock", "🎁" }, { "calendar", "📅" }, { "buddies", "🐹" }, { "titles", "👑" } } do
 		local b = mkButton(rail, {
 			Size = UDim2.fromOffset(56, 56),
 			Text = entry[2],
@@ -3172,6 +3372,7 @@ function UIController.Start()
 	buildFusionPanel()
 	buildCalendarPanel()
 	buildBuddiesPanel()
+	buildTitlesPanel()
 	buildRail()
 	buildToasts()
 	buildBossHud()
