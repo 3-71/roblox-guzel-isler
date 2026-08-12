@@ -86,6 +86,8 @@ local function defaultProfile(): Types.Profile
 		raceWins = 0,
 		buddies = {},
 		equippedBuddy = nil,
+		titles = {},
+		equippedTitle = nil,
 		saveCount = 0,
 	}
 end

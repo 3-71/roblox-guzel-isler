@@ -636,3 +636,44 @@ Landed contracts:
 
 Validation: node tools/check-luau.mjs && node tools/sim-economy.mjs && rojo
 build — all three before finishing any slot.
+
+# Phase 6 — Harmony Obelisk & Titles/Auras
+
+Landed contracts: GameConfig.Harmony (goal/points/reward pool),
+Config/Titles.luau (12 titles, aura kinds, earn kinds), Types.Profile
+titles/equippedTitle (+ DataService defaults), Remotes "TitleEquip",
+EventService.ForceEvent(id) (generation-counter safe), harmony point hooks
+already landed in ProductionService (collect) + EconomyService (sell) via
+lazy pcall -> HarmonyService.AddPoints(points).
+
+1. **HarmonyService** (NEW): builds a "HarmonyObelisk" Model in Workspace on
+   the hub grass ring (read HubBuilder.luau first and pick a spot that is
+   demonstrably free of stalls/lamps/trees/sign/monument). Tall crystal of
+   ~8 stacked neon segments: segments light bottom-up with points/goal fill
+   (dim = Transparency high). BillboardGui: "🤝 SERVER HARMONY" + percent.
+   API: AddPoints(points: number) — global pool, no player arg. Typing
+   points: subscribe EquipService.OnTypeAccepted (+PointsType per press).
+   Mirrors state to Workspace attributes HarmonyPoints/HarmonyGoal. Hype
+   Notify at 50% and 90% (once per fill). Full: flash/burst + flex Notify +
+   EventService.ForceEvent(random of Harmony.RewardEventIds) + points reset,
+   goal *= GoalGrowth (per server session, never persisted). No remotes, no
+   profile writes.
+2. **TitleService** (NEW): StatFor(profile, kind) maps Config/Titles earn
+   kinds to profile stats (unique = # keys in collection; sets = # keys in
+   setsClaimed; secrets = # collection keys whose keyboard def is a secret —
+   check Config/Keyboards for the actual field; earned = totalEarned).
+   Unlock sweep on profile load + 60s loop: newly earned -> profile.titles
+   [id] = true + celebratory Notify + MarkDirty/Sync (once per sweep).
+   TitleEquip remote (3/s bucket): string-or-nil, must be owned; sets
+   profile.equippedTitle + MarkDirty/Sync + reapply visuals. Visuals: one
+   "TitleTag" BillboardGui above the character's head (title name in def
+   color, subtle stroke, always-on-top false) + one aura ParticleEmitter on
+   HumanoidRootPart per aura kind (sparkle/gold/fire/hearts/storm/rainbow —
+   engine-only textures, e.g. the default spark texture, ColorSequence per
+   kind; rainbow cycles hue via a small task). Reapply on CharacterAdded;
+   remove cleanly on unequip/leave.
+3. **UIController**: "👑" rail panel (rail 8 -> 9 buttons): one card per
+   title — owned: colored name + aura kind + Equip/Unequip (TitleEquip);
+   locked: greyed + earn.label + progress bar from the same StatFor mapping
+   (client-side twin reading the snapshot). Everything existing stays.
+4. init.server wiring (HarmonyService, TitleService): integrator.

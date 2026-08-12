@@ -46,6 +46,8 @@ local REMOTE_NAMES = {
 	"BossState", -- server -> ALL clients: { phase: "warning"|"fight"|"won"|"lost"|"idle", hp, maxHp, endsAt } THOCK MONSTER updates
 	"ClaimCalendar", -- client -> server: claim today's streak-calendar reward (validated server-side)
 	"BuddyEquip", -- client -> server: (buddyId: string?) equip an owned Thock Buddy; nil unequips
+	-- phase 6
+	"TitleEquip", -- client -> server: (titleId: string?) equip an earned title; nil unequips
 }
 
 local Remotes = {}

@@ -187,6 +187,12 @@ local function rideBelt(
 	-- the inventory filled while this item was in flight.
 	if player.Parent ~= nil then
 		InventoryService.AddKeyboard(player, keyboardId, "belt", mutation)
+		-- Everyone's production feeds the hub Harmony obelisk (Phase 6).
+		-- Lazy pcall: no cycle, still boots if HarmonyService is absent.
+		pcall(function()
+			local HarmonyService = require(script.Parent.HarmonyService) :: any
+			HarmonyService.AddPoints(GameConfig.Harmony.PointsProduce)
+		end)
 	end
 end
 

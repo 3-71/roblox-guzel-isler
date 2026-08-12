@@ -69,6 +69,9 @@ export type Profile = {
 	-- owned Thock Buddies: BuddyDef id -> true (see Config/Buddies)
 	buddies: { [string]: boolean },
 	equippedBuddy: string?,
+	-- earned titles: TitleDef id -> true (see Config/Titles; kept forever)
+	titles: { [string]: boolean },
+	equippedTitle: string?,
 	-- monotonic write counter (DataService staleness guard)
 	saveCount: number,
 }

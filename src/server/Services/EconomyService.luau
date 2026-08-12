@@ -381,6 +381,13 @@ local function onSellRequest(player: Player, mode: unknown, payload: unknown)
 
 	EconomyService.AddMoney(player, total)
 
+	-- Selling feeds the hub Harmony obelisk (Phase 6). One transaction = one
+	-- bump, however large the bulk. Lazy pcall: no cycle, optional service.
+	pcall(function()
+		local HarmonyService = require(script.Parent.HarmonyService) :: any
+		HarmonyService.AddPoints(GameConfig.Harmony.PointsSell)
+	end)
+
 	-- Sell ceremony data for the seller's client (Phase 3 contract).
 	Remotes.SellReport:FireClient(player, {
 		count = #removed,

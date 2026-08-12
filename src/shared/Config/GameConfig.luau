@@ -155,6 +155,19 @@ local GameConfig = {
 		EffectSeconds = 600, -- how long the win/lose multiplier lasts
 	},
 
+	-- ===== Harmony obelisk (see HarmonyService) =====
+	-- A crystal at the hub fills from EVERYONE's producing/selling/typing;
+	-- full = a free server-wide weather event, then the goal grows.
+	Harmony = {
+		Goal = 3_000, -- points for the first fill (per server session)
+		GoalGrowth = 1.25, -- goal multiplier after each completion
+		PointsProduce = 2, -- per keyboard collected off a belt
+		PointsSell = 3, -- per sell transaction (bulk counts once)
+		PointsType = 0.2, -- per accepted keypress on an equipped board
+		-- Reward pool: one of these fires the moment the obelisk fills.
+		RewardEventIds = { "thock_storm", "golden_hour", "overclocked" },
+	},
+
 	-- ===== 7-day streak calendar (see StreakService) =====
 	-- Sits on top of the daily streak: one claim per day, position advances
 	-- 1..7 then wraps. Missing more than GraceDays days resets to day 1.
